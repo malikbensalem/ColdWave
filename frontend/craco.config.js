@@ -61,22 +61,40 @@ let webpackConfig = {
 };
 
 webpackConfig.devServer = (devServerConfig) => {
-  // Add health check endpoints if enabled
-  if (config.enableHealthCheck && setupHealthEndpoints && healthPluginInstance) {
-    const originalSetupMiddlewares = devServerConfig.setupMiddlewares;
+  // react-scripts 5 emits a webpack-dev-server v4 options object, but v5 is installed
+  // (pinned via resolutions). Translate the renamed/removed keys to the v5 schema.
+  const legacyBefore = devServerConfig.onBeforeSetupMiddleware;
+  const legacyAfter = devServerConfig.onAfterSetupMiddleware;
+  const originalSetupMiddlewares = devServerConfig.setupMiddlewares;
 
-    devServerConfig.setupMiddlewares = (middlewares, devServer) => {
-      // Call original setup if exists
-      if (originalSetupMiddlewares) {
-        middlewares = originalSetupMiddlewares(middlewares, devServer);
-      }
-
-      // Setup health endpoints
-      setupHealthEndpoints(devServer, healthPluginInstance);
-
-      return middlewares;
-    };
+  if ("https" in devServerConfig) {
+    if (devServerConfig.https) devServerConfig.server = "https";
+    delete devServerConfig.https;
   }
+
+  const VALID_KEYS = [
+    "allowedHosts", "bonjour", "client", "compress", "devMiddleware", "headers",
+    "historyApiFallback", "host", "hot", "ipc", "liveReload", "onListening", "open",
+    "port", "proxy", "server", "app", "setupExitSignals", "setupMiddlewares",
+    "static", "watchFiles", "webSocketServer",
+  ];
+  Object.keys(devServerConfig).forEach((k) => {
+    if (!VALID_KEYS.includes(k)) delete devServerConfig[k];
+  });
+
+  devServerConfig.allowedHosts = "all";
+
+  devServerConfig.setupMiddlewares = (middlewares, devServer) => {
+    if (typeof legacyBefore === "function") legacyBefore(devServer);
+    if (originalSetupMiddlewares) {
+      middlewares = originalSetupMiddlewares(middlewares, devServer);
+    }
+    if (typeof legacyAfter === "function") legacyAfter(devServer);
+    if (config.enableHealthCheck && setupHealthEndpoints && healthPluginInstance) {
+      setupHealthEndpoints(devServer, healthPluginInstance);
+    }
+    return middlewares;
+  };
 
   return devServerConfig;
 };
