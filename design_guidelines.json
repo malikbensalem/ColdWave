@@ -1,0 +1,130 @@
+{
+  "design_system": {
+    "theme": "light",
+    "archetype": "Archetype 4: Swiss & High-Contrast",
+    "reasoning": "A serious B2B sales-tech / telephony SaaS handling GDPR and UK cold-calling laws requires authority, clarity, and truth. The Swiss High-Contrast archetype ensures dense data is highly readable and compliance features feel trustworthy and objective.",
+    "colors": {
+      "background": "#F9FAFB",
+      "surface": "#FFFFFF",
+      "primary": "#002FA7",
+      "primary_foreground": "#FFFFFF",
+      "secondary": "#F3F4F6",
+      "secondary_foreground": "#0F172A",
+      "muted": "#E2E8F0",
+      "muted_foreground": "#64748B",
+      "accent": "#F1F5F9",
+      "accent_foreground": "#0F172A",
+      "destructive": "#FF3B30",
+      "destructive_foreground": "#FFFFFF",
+      "success": "#16A34A",
+      "success_foreground": "#FFFFFF",
+      "warning": "#FFCC00",
+      "warning_foreground": "#422006",
+      "border": "#E2E8F0",
+      "ring": "#002FA7"
+    },
+    "typography": {
+      "fonts": {
+        "heading": "'Cabinet Grotesk', sans-serif",
+        "body": "'IBM Plex Sans', sans-serif",
+        "mono": "'JetBrains Mono', monospace"
+      },
+      "scale": {
+        "h1": "text-4xl tracking-tight font-bold",
+        "h2": "text-2xl tracking-tight font-semibold",
+        "h3": "text-xl font-medium",
+        "h4": "text-lg font-medium",
+        "body": "text-sm leading-relaxed",
+        "label": "text-xs tracking-[0.2em] uppercase font-bold text-muted-foreground"
+      }
+    },
+    "layout": {
+      "container": "w-full h-screen flex overflow-hidden bg-background",
+      "sidebar": "w-64 flex-shrink-0 border-r border-border bg-surface flex flex-col",
+      "main": "flex-1 flex flex-col min-w-0 overflow-y-auto",
+      "grid_strategy": "Control Room Grid - grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4",
+      "radius": "rounded-sm (max 4px for sharp, technical precision)"
+    },
+    "components": {
+      "card": "bg-surface border border-border p-5 rounded-sm shadow-sm",
+      "button": "inline-flex items-center justify-center rounded-sm text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+      "table": "w-full text-sm text-left border-collapse",
+      "input": "flex h-10 w-full rounded-sm border border-border bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+      "badge": "inline-flex items-center rounded-none border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+      "pipeline_kanban": "flex gap-4 overflow-x-auto pb-4 items-start",
+      "kanban_column": "w-80 flex-shrink-0 flex flex-col gap-3 bg-accent/50 p-3 rounded-sm border border-border"
+    },
+    "animations": {
+      "hover": "transition-all duration-200 ease-in-out",
+      "micro_interactions": "active:scale-[0.98]",
+      "table_row": "hover:bg-muted/50"
+    },
+    "accessibility": {
+      "data_testid_requirement": "All interactive and key informational elements MUST include a data-testid attribute in kebab-case, role-based.",
+      "contrast": "Minimum 4.5:1 for normal text, explicit text color definitions on all hover states."
+    },
+    "media": {
+      "icons": "Phosphor Icons (@phosphor-icons/react) for sharp, technical dashboard clarity."
+    }
+  },
+  "pages": {
+    "dashboard": {
+      "layout": "Control Room Grid",
+      "features": [
+        "Campaign Analytics Overview",
+        "Live Call Feed / AI Calling Engine View",
+        "KPI widgets (Connect Rate, Opt-outs, Positive Responses)"
+      ],
+      "styling_notes": "Dense metric cards. Use JetBrains Mono for numbers. Sharp geometric progress bars."
+    },
+    "crm_leads": {
+      "layout": "Full-width Data Table / Pipeline Toggle",
+      "features": [
+        "Contacts List",
+        "Lead Status Pipeline (New, Contacted, Positive, Callback, Opted-out, DNC)",
+        "Slide-out Contact Detail View with Call History"
+      ],
+      "styling_notes": "Use intense background hues for status indicators (e.g., solid signal red dot for Opted-out). Tabular data must be perfectly left-aligned."
+    },
+    "campaigns": {
+      "layout": "Split Layout (List & Wizard)",
+      "features": [
+        "Campaign Management",
+        "Call Scripts Editor",
+        "AI Voice Selection (Male/Female)",
+        "Test Call Dialer"
+      ],
+      "styling_notes": "Voice selection cards should feature inline play/pause audio interaction. Script editor must use a monospace font to look like a raw input engine."
+    },
+    "compliance_center": {
+      "layout": "Settings-style vertical lists with deep data logs",
+      "features": [
+        "UK TPS/CTPS Opt-out Registry",
+        "GDPR Consent & Right to Erasure actions",
+        "Calling Hours Enforcer",
+        "Do-Not-Call (DNC) List"
+      ],
+      "styling_notes": "Extremely formal UI. Use a 'monochrome-first' approach, reserving red (#FF3B30) strictly for destructive actions (Erasure, DNC enforcement)."
+    },
+    "admin_settings": {
+      "layout": "Left Sidebar Tabs",
+      "features": [
+        "Multi-tenant Switcher",
+        "3CX Integration Panel",
+        "ElevenLabs Voice API Integration",
+        "LLM Provider Setup",
+        "User & Role Management",
+        "Credentials Playbook"
+      ],
+      "styling_notes": "Clear, separated form segments for API keys with obscured inputs. Emphasize saved vs unsaved states."
+    }
+  },
+  "instructions_to_main_agent": [
+    "Install Phosphor Icons: yarn add @phosphor-icons/react",
+    "Use pure Shadcn UI but aggressively customize the border-radius to `rounded-sm` (2px-4px) and remove generic drop-shadows to fit the Swiss Brutalist aesthetic.",
+    "No teal, no purple. Stick exclusively to the designated color palette: White, Off-white, Klein Blue, Red, Yellow, Emerald.",
+    "Implement `data-testid` on ALL buttons, inputs, tabs, and list items (e.g., data-testid='create-campaign-button').",
+    "For the CRM, build a robust pure-Tailwind HTML table or customize Shadcn Table for maximum data density (py-2 padding on cells instead of standard py-4).",
+    "For Typography: use Cabinet Grotesk (or similar geometric bold sans) for headings and IBM Plex Sans for body/UI text."
+  ]
+}
