@@ -35,8 +35,15 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - AI features depend on Emergent LLM key budget (currently very low — needs top-up).
 
 ## Backlog / Next
-- P0: Top up Emergent LLM budget (script generation currently 500s on budget cap).
 - P1: Wire real 3CX Call Control API for live outbound calls + call recording.
-- P1: Live ElevenLabs streaming audio in test calls; per-org voice cloning.
 - P1: Office 365 SSO live OAuth flow; bulk CSV lead import; campaign auto-dialer queue.
-- P2: TPS/CTPS registry API check; webhooks; analytics export; per-user permissions beyond admin/agent.
+- P1: SMS channel (provider abstraction already supports adding it alongside WhatsApp).
+- P2: Vector search for KB retrieval; TPS/CTPS registry API check; analytics export.
+
+## Iteration 1.1 (2026-06-21) — 5 feature areas
+- One-command local startup: `./start.sh` / `make dev` (env+dep+Mongo validation, health URLs, graceful shutdown); `.env.example` templates; `GET /api/health`.
+- WhatsApp (Meta Cloud API): provider abstraction + mock, send w/ retries+dead-letter, signed webhook (X-Hub-Signature-256) + verify handshake, lifecycle states, rate limiting, PII-redacted logs. New `/messaging` page.
+- ElevenLabs fix: deterministic `select_tts_provider`/`generate_tts`; test calls now use ElevenLabs (model+stability/style applied) with no silent fallback; key Validate endpoint+button.
+- Audit log: append-only `record_audit` (actor, action, entity, before/after diff, source IP, UTC, correlation id via middleware); `GET /api/audit` filters; Settings→Audit viewer.
+- KB opening mode: scripted vs KB-guided openings with guardrails + fallback; KB paste + pdf/txt upload; Settings→Opening & KB.
+- Tests: `backend/tests/` pytest (49 passing). Docs: README + CHANGELOG.
