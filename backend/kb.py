@@ -1,6 +1,7 @@
 import io
 import uuid
 import logging
+from typing import Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -16,6 +17,11 @@ def now_iso():
 class KBEntryCreate(BaseModel):
     title: str
     content: str
+
+
+class KBEntryUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
 
 
 async def get_kb_entries(org_id: str, active_only: bool = False):
@@ -41,6 +47,19 @@ def build_kb_router(get_current_user, record_audit):
                            after={"title": req.title})
         doc.pop("_id", None)
         return doc
+
+    @router.put("/{kb_id}")
+    async def edit_kb(kb_id: str, req: KBEntryUpdate, user: dict = Depends(get_current_user)):
+        entry = await db.kb_entries.find_one({"id": kb_id, "org_id": user["org_id"]}, {"_id": 0})
+        if not entry:
+            raise HTTPException(404, "Entry not found")
+        updates = {k: v for k, v in req.model_dump().items() if v is not None}
+        if not updates:
+            return entry
+        await db.kb_entries.update_one({"id": kb_id, "org_id": user["org_id"]}, {"$set": updates})
+        await record_audit(user["org_id"], user["email"], "kb_edit", "kb_entry", kb_id,
+                           before={"title": entry.get("title")}, after={"title": updates.get("title", entry.get("title"))})
+        return await db.kb_entries.find_one({"id": kb_id, "org_id": user["org_id"]}, {"_id": 0})
 
     @router.put("/{kb_id}/toggle")
     async def toggle_kb(kb_id: str, user: dict = Depends(get_current_user)):

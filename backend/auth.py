@@ -7,7 +7,7 @@ import httpx
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, Response, HTTPException, Depends
 from database import db
-from models import RegisterRequest, LoginRequest, now_utc, new_id
+from models import RegisterRequest, LoginRequest, ImpersonateRequest, now_utc, new_id
 
 JWT_ALGORITHM = "HS256"
 ACCESS_MIN = 60 * 24  # 1 day
@@ -32,13 +32,15 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(user_id: str, email: str) -> str:
+def create_access_token(user_id: str, email: str, impersonator: dict = None) -> str:
     payload = {
         "sub": user_id,
         "email": email,
         "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_MIN),
         "type": "access",
     }
+    if impersonator:
+        payload["imp"] = impersonator
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
@@ -60,6 +62,8 @@ async def _public_user(user: dict) -> dict:
         "org_name": org["name"] if org else "",
         "auth_provider": user.get("auth_provider", "password"),
         "picture": user.get("picture", ""),
+        "impersonating": bool(user.get("_impersonator")),
+        "impersonator": user.get("_impersonator") or None,
     }
 
 
@@ -101,6 +105,8 @@ async def get_current_user(request: Request) -> dict:
         user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        if payload.get("imp"):
+            user["_impersonator"] = payload["imp"]
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -109,8 +115,16 @@ async def get_current_user(request: Request) -> dict:
 
 
 async def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") != "admin":
+    if user.get("role") not in ("admin", "owner"):
         raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+async def require_owner(user: dict = Depends(get_current_user)) -> dict:
+    # The real actor must be an owner (impersonation does not grant owner powers).
+    real_role = user.get("_impersonator", {}).get("role") if user.get("_impersonator") else user.get("role")
+    if real_role != "owner":
+        raise HTTPException(status_code=403, detail="Platform owner access required")
     return user
 
 
@@ -248,6 +262,49 @@ async def logout(request: Request, response: Response):
     return {"ok": True}
 
 
+@auth_router.post("/impersonate")
+async def impersonate(req: ImpersonateRequest, response: Response, user: dict = Depends(get_current_user)):
+    if user.get("_impersonator"):
+        raise HTTPException(status_code=400, detail="Already impersonating. Stop impersonation first.")
+    target = await db.users.find_one({"id": req.user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target["id"] == user["id"]:
+        raise HTTPException(status_code=400, detail="You cannot impersonate yourself")
+    role = user.get("role")
+    if role == "owner":
+        pass
+    elif role == "admin":
+        if target.get("org_id") != user.get("org_id") or target.get("role") == "owner":
+            raise HTTPException(status_code=403, detail="You can only impersonate users within your business.")
+    else:
+        raise HTTPException(status_code=403, detail="You do not have permission to impersonate users.")
+    imp = {"id": user["id"], "email": user["email"], "role": role,
+           "org_id": user["org_id"], "name": user.get("name", "")}
+    token = create_access_token(target["id"], target["email"], impersonator=imp)
+    set_auth_cookie(response, "access_token", token, ACCESS_MIN * 60)
+    response.delete_cookie("session_token", path="/")
+    target["_impersonator"] = imp
+    out = await _public_user(target)
+    out["access_token"] = token
+    return out
+
+
+@auth_router.post("/stop-impersonation")
+async def stop_impersonation(response: Response, user: dict = Depends(get_current_user)):
+    imp = user.get("_impersonator")
+    if not imp:
+        raise HTTPException(status_code=400, detail="Not currently impersonating")
+    real = await db.users.find_one({"id": imp["id"]}, {"_id": 0})
+    if not real:
+        raise HTTPException(status_code=404, detail="Original user not found")
+    token = create_access_token(real["id"], real["email"])
+    set_auth_cookie(response, "access_token", token, ACCESS_MIN * 60)
+    out = await _public_user(real)
+    out["access_token"] = token
+    return out
+
+
 async def seed_admin():
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@coldwave.ai").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin123!")
@@ -271,3 +328,29 @@ async def seed_admin():
         await db.users.update_one(
             {"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}}
         )
+
+
+async def seed_owner():
+    owner_email = os.environ.get("OWNER_EMAIL", "owner@coldwave.ai").lower()
+    owner_password = os.environ.get("OWNER_PASSWORD", "Owner123!")
+    existing = await db.users.find_one({"email": owner_email})
+    if existing is None:
+        org = await db.organizations.find_one({"name": "ColdWave Platform"})
+        if not org:
+            org = await _create_org("ColdWave Platform")
+        await db.users.insert_one({
+            "id": new_id("user"),
+            "org_id": org["id"],
+            "email": owner_email,
+            "name": "Platform Owner",
+            "password_hash": hash_password(owner_password),
+            "role": "owner",
+            "auth_provider": "password",
+            "picture": "",
+            "created_at": now_utc().isoformat(),
+        })
+    else:
+        updates = {"role": "owner"}
+        if not verify_password(owner_password, existing.get("password_hash", "")):
+            updates["password_hash"] = hash_password(owner_password)
+        await db.users.update_one({"email": owner_email}, {"$set": updates})

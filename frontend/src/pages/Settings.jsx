@@ -1,11 +1,11 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import api, { apiErr } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import {
-  Plug, Buildings, UsersThree, BookOpen, FloppyDisk, Plus, Trash, Phone, MicrophoneStage, Brain, MicrosoftOutlookLogo, CheckCircle, Key, WhatsappLogo, Sparkle, ListMagnifyingGlass, UploadSimple, BookBookmark,
+  Plug, Buildings, UsersThree, BookOpen, FloppyDisk, Plus, Trash, Phone, MicrophoneStage, Brain, MicrosoftOutlookLogo, CheckCircle, Key, WhatsappLogo, Sparkle, ListMagnifyingGlass, UploadSimple, BookBookmark, PencilSimple,
 } from "@phosphor-icons/react";
 
 export default function Settings() {
@@ -41,37 +41,76 @@ function IntegrationsTab() {
   const [data, setData] = useState(null);
   const [elevenStatus, setElevenStatus] = useState(null);
   const [elevenBusy, setElevenBusy] = useState(false);
+  const [elevenModels, setElevenModels] = useState([]);
   const [llmModels, setLlmModels] = useState({});
   const [llmStatus, setLlmStatus] = useState(null);
   const [llmBusy, setLlmBusy] = useState(false);
+  const elevenTimer = useRef(null);
+  const elevenLastKey = useRef(null);
+  const llmTimer = useRef(null);
+  const llmLastKey = useRef(null);
   const load = useCallback(async () => {
     try {
-      const [r, m] = await Promise.all([api.get("/settings/integrations"), api.get("/llm/models")]);
-      setData(r.data); setLlmModels(m.data);
+      const [r, m, em] = await Promise.all([api.get("/settings/integrations"), api.get("/llm/models"), api.get("/elevenlabs/models")]);
+      setData(r.data); setLlmModels(m.data); setElevenModels(em.data.models || []);
+      elevenLastKey.current = r.data.elevenlabs_api_key || "";
     } catch (e) { toast.error(apiErr(e)); }
   }, []);
   useEffect(() => { load(); }, [load]);
-  const save = async () => { try { await api.put("/settings/integrations", data); toast.success("Integrations saved"); } catch (e) { toast.error(apiErr(e)); } };
+  const save = async (override) => { try { await api.put("/settings/integrations", override || data); toast.success("Integrations saved"); } catch (e) { toast.error(apiErr(e)); } };
   const testTcx = async () => { try { const r = await api.post("/settings/integrations/tcx/test"); toast.success(r.data.message); } catch (e) { toast.error(apiErr(e)); } };
-  const validateEleven = async () => {
+
+  const validateEleven = async (auto = false) => {
     setElevenBusy(true); setElevenStatus(null);
     try {
       const r = await api.post("/settings/integrations/elevenlabs/test", { api_key: data.elevenlabs_api_key || "" });
       setElevenStatus(r.data);
-      r.data.valid ? toast.success(r.data.message) : toast.error(r.data.message);
-    } catch (e) { toast.error(apiErr(e)); }
+      if (r.data.valid) {
+        // Auto-enable voices and persist when the key is valid.
+        const next = { ...data, elevenlabs_enabled: true };
+        setData(next);
+        await save(next);
+        toast.success(`${r.data.message} ElevenLabs voices enabled.`);
+      } else if (!auto) {
+        toast.error(r.data.message);
+      }
+    } catch (e) { if (!auto) toast.error(apiErr(e)); }
     finally { setElevenBusy(false); }
   };
+
   const PROVIDER_KEY = { openai: "openai_api_key", anthropic: "anthropic_api_key", gemini: "gemini_api_key" };
-  const validateLlm = async () => {
+  const validateLlm = async (auto = false) => {
     setLlmBusy(true); setLlmStatus(null);
     try {
       const r = await api.post("/settings/integrations/llm/test", { provider: data.llm_provider, api_key: data[PROVIDER_KEY[data.llm_provider]] || "", model: data.llm_model });
       setLlmStatus(r.data);
-      r.data.valid ? toast.success(r.data.message) : toast.error(r.data.message);
-    } catch (e) { toast.error(apiErr(e)); }
+      if (!auto) { r.data.valid ? toast.success(r.data.message) : toast.error(r.data.message); }
+    } catch (e) { if (!auto) toast.error(apiErr(e)); }
     finally { setLlmBusy(false); }
   };
+
+  // Debounced auto-validation of the ElevenLabs key on paste/change.
+  useEffect(() => {
+    if (!data) return;
+    const key = data.elevenlabs_api_key || "";
+    if (!key || key === elevenLastKey.current) return;
+    if (elevenTimer.current) clearTimeout(elevenTimer.current);
+    elevenTimer.current = setTimeout(() => { elevenLastKey.current = key; validateEleven(true); }, 900);
+    return () => elevenTimer.current && clearTimeout(elevenTimer.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.elevenlabs_api_key]);
+
+  // Debounced auto-validation of the selected LLM provider key.
+  useEffect(() => {
+    if (!data) return;
+    const key = data[PROVIDER_KEY[data.llm_provider]] || "";
+    if (!key || key === llmLastKey.current) return;
+    if (llmTimer.current) clearTimeout(llmTimer.current);
+    llmTimer.current = setTimeout(() => { llmLastKey.current = key; validateLlm(true); }, 900);
+    return () => llmTimer.current && clearTimeout(llmTimer.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.openai_api_key, data?.anthropic_api_key, data?.gemini_api_key, data?.llm_provider]);
+
   const setProvider = (e) => {
     const p = e.target.value;
     const models = llmModels[p] || [];
@@ -98,21 +137,19 @@ function IntegrationsTab() {
       </Section>
 
       <Section icon={MicrophoneStage} title="ElevenLabs Voice" badge={elevenStatus ? (elevenStatus.valid ? "Valid ✓" : "Invalid ✗") : (data.elevenlabs_api_key ? "Key set" : "Mock mode")}>
-        <F label="API Key" testid="eleven-key" type="password" value={data.elevenlabs_api_key} onChange={set("elevenlabs_api_key")} placeholder="sk-..." />
+        <F label="API Key (auto-validates on paste)" testid="eleven-key" type="password" value={data.elevenlabs_api_key} onChange={set("elevenlabs_api_key")} placeholder="sk-..." />
         <div className="flex items-center gap-3">
           <Toggle testid="eleven-enabled" label="Use ElevenLabs for voice synthesis" checked={data.elevenlabs_enabled} onChange={set("elevenlabs_enabled")} />
-          <button data-testid="validate-eleven-button" onClick={validateEleven} disabled={elevenBusy} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">{elevenBusy ? "Checking…" : "Validate key"}</button>
+          {elevenBusy && <span className="text-xs text-muted-foreground">Validating…</span>}
+          <button data-testid="validate-eleven-button" onClick={() => validateEleven(false)} disabled={elevenBusy} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">{elevenBusy ? "Checking…" : "Validate key"}</button>
         </div>
         {elevenStatus && (
           <div data-testid="eleven-validate-result" className={`text-xs rounded-sm p-2 border ${elevenStatus.valid ? "border-success/40 bg-success/10 text-success" : "border-destructive/40 bg-destructive/10 text-destructive"}`}>{elevenStatus.message}</div>
         )}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <F label="Model" testid="eleven-model" value={data.elevenlabs_model || "eleven_multilingual_v2"} onChange={set("elevenlabs_model")} />
-          <F label="Stability" testid="eleven-stability" type="number" step="0.05" min="0" max="1" value={data.elevenlabs_stability ?? 0.5} onChange={set("elevenlabs_stability")} />
-          <F label="Similarity" testid="eleven-similarity" type="number" step="0.05" min="0" max="1" value={data.elevenlabs_similarity ?? 0.75} onChange={set("elevenlabs_similarity")} />
-          <F label="Style" testid="eleven-style" type="number" step="0.05" min="0" max="1" value={data.elevenlabs_style ?? 0.0} onChange={set("elevenlabs_style")} />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Sel label="Model" testid="eleven-model" value={data.elevenlabs_model || "eleven_multilingual_v2"} onChange={set("elevenlabs_model")} options={elevenModels.map((m) => ({ value: m, label: m }))} />
         </div>
-        <p className="text-xs text-muted-foreground">Validate confirms the key works before saving. When enabled with a valid key, test calls use ElevenLabs audio (no silent fallback).</p>
+        <p className="text-xs text-muted-foreground">Paste a key and it validates automatically — if valid, voices are enabled and saved. Test calls then use ElevenLabs audio (no silent fallback).</p>
       </Section>
 
       <Section icon={WhatsappLogo} title="WhatsApp Business Cloud API" badge={data.whatsapp_access_token ? "Configured" : "Mock mode"}>
@@ -131,10 +168,11 @@ function IntegrationsTab() {
           <Sel label="Provider" testid="llm-provider" value={data.llm_provider} onChange={setProvider} options={[{ value: "anthropic", label: "Anthropic (Claude)" }, { value: "openai", label: "OpenAI" }, { value: "gemini", label: "Google Gemini" }]} />
           <Sel label="Model" testid="llm-model" value={data.llm_model} onChange={set("llm_model")} options={(llmModels[data.llm_provider] || []).map((m) => ({ value: m, label: m }))} />
         </div>
-        <F label={`${data.llm_provider} API key (optional — leave blank to use the Emergent key)`} testid="llm-key" type="password"
+        <F label={`${data.llm_provider} API key (auto-validates on paste — leave blank to use the Emergent key)`} testid="llm-key" type="password"
           value={data[PROVIDER_KEY[data.llm_provider]] || ""} onChange={set(PROVIDER_KEY[data.llm_provider])} placeholder="Bring your own key for the selected provider…" />
         <div className="flex items-center gap-3">
-          <button data-testid="validate-llm-button" onClick={validateLlm} disabled={llmBusy} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">{llmBusy ? "Checking…" : "Validate key"}</button>
+          {llmBusy && <span className="text-xs text-muted-foreground">Validating…</span>}
+          <button data-testid="validate-llm-button" onClick={() => validateLlm(false)} disabled={llmBusy} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">{llmBusy ? "Checking…" : "Validate key"}</button>
           {llmStatus && <span data-testid="llm-validate-result" className={`text-xs ${llmStatus.valid ? "text-success" : "text-destructive"}`}>{llmStatus.message}</span>}
         </div>
         <div className="text-xs text-muted-foreground border-t border-border pt-2 mt-1">
@@ -160,7 +198,7 @@ function IntegrationsTab() {
         <Toggle testid="o365-enabled" label="Enable Office 365 SSO for this workspace" checked={data.o365_enabled} onChange={set("o365_enabled")} />
       </Section>
 
-      <button data-testid="save-integrations-button" onClick={save} className="inline-flex items-center gap-2 h-10 px-5 bg-primary text-primary-foreground rounded-sm text-sm font-medium hover:opacity-90"><FloppyDisk size={16} weight="bold" /> Save Integrations</button>
+      <button data-testid="save-integrations-button" onClick={() => save()} className="inline-flex items-center gap-2 h-10 px-5 bg-primary text-primary-foreground rounded-sm text-sm font-medium hover:opacity-90"><FloppyDisk size={16} weight="bold" /> Save Integrations</button>
     </div>
   );
 }
@@ -170,13 +208,19 @@ function OrgTab() {
   const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
   const load = useCallback(async () => { const r = await api.get("/settings/org"); setOrg(r.data); }, []);
   useEffect(() => { load(); }, [load]);
-  const save = async () => { try { await api.put("/settings/org", { name: org.name, calling_hours_start: org.calling_hours_start, calling_hours_end: org.calling_hours_end, calling_days: org.calling_days }); toast.success("Saved"); } catch (e) { toast.error(apiErr(e)); } };
+  const save = async () => { try { await api.put("/settings/org", { name: org.name, calling_hours_start: org.calling_hours_start, calling_hours_end: org.calling_hours_end, calling_days: org.calling_days, ai_system_prompt: org.ai_system_prompt || "" }); toast.success("Saved"); } catch (e) { toast.error(apiErr(e)); } };
   if (!org) return <div className="text-sm text-muted-foreground">Loading…</div>;
   const toggleDay = (d) => setOrg({ ...org, calling_days: org.calling_days.includes(d) ? org.calling_days.filter((x) => x !== d) : [...org.calling_days, d] });
   return (
     <div className="space-y-4 max-w-xl">
       <Section icon={Buildings} title="Organisation">
         <F label="Workspace name" testid="org-name-input" value={org.name} onChange={(e) => setOrg({ ...org, name: e.target.value })} />
+      </Section>
+      <Section icon={Brain} title="AI System Prompt (extends the platform prompt)">
+        <textarea data-testid="org-ai-prompt" value={org.ai_system_prompt || ""} onChange={(e) => setOrg({ ...org, ai_system_prompt: e.target.value })} rows={4}
+          placeholder="Add business-specific AI instructions (tone, do's & don'ts). This is appended after the platform-wide prompt."
+          className="w-full rounded-sm border border-input bg-card p-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+        <p className="text-xs text-muted-foreground">Your instructions extend the global platform prompt and apply to all AI scripts and live calls in this workspace.</p>
       </Section>
       <Section icon={Phone} title="UK Calling Hours">
         <div className="grid grid-cols-2 gap-3">
@@ -272,44 +316,29 @@ function PlaybookTab() {
 }
 
 function OpeningTab() {
-  const [org, setOrg] = useState(null);
   const [kb, setKb] = useState([]);
   const [entry, setEntry] = useState({ title: "", content: "" });
-  const load = useCallback(async () => {
-    const [o, k] = await Promise.all([api.get("/settings/org"), api.get("/kb")]);
-    setOrg(o.data); setKb(k.data);
-  }, []);
+  const [editing, setEditing] = useState(null); // {id,title,content}
+  const [viewing, setViewing] = useState(null);
+  const load = useCallback(async () => { const k = await api.get("/kb"); setKb(k.data); }, []);
   useEffect(() => { load(); }, [load]);
-  const saveOrg = async (patch) => { try { const r = await api.put("/settings/org", patch); setOrg(r.data); toast.success("Saved"); } catch (e) { toast.error(apiErr(e)); } };
-  const addEntry = async () => { if (!entry.title || !entry.content) return; try { await api.post("/kb", entry); setEntry({ title: "", content: "" }); load(); toast.success("KB entry added"); } catch (e) { toast.error(apiErr(e)); } };
+  const addEntry = async () => { if (!entry.title || !entry.content) return; try { await api.post("/kb", entry); setEntry({ title: "", content: "" }); load(); toast.success("Document added"); } catch (e) { toast.error(apiErr(e)); } };
   const upload = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
     const fd = new FormData(); fd.append("file", file);
-    try { await api.post("/kb/upload", fd, { headers: { "Content-Type": "multipart/form-data" } }); load(); toast.success("Document added to KB"); } catch (err) { toast.error(apiErr(err)); }
+    try { await api.post("/kb/upload", fd, { headers: { "Content-Type": "multipart/form-data" } }); load(); toast.success("Document added"); } catch (err) { toast.error(apiErr(err)); }
     e.target.value = "";
   };
   const remove = async (id) => { await api.delete(`/kb/${id}`); load(); };
   const toggle = async (id) => { await api.put(`/kb/${id}/toggle`); load(); };
-  if (!org) return <div className="text-sm text-muted-foreground">Loading…</div>;
+  const saveEdit = async () => {
+    try { await api.put(`/kb/${editing.id}`, { title: editing.title, content: editing.content }); toast.success("Document updated"); setEditing(null); load(); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <Section icon={Sparkle} title="Opening Line Mode">
-        <div className="flex gap-2">
-          {["scripted", "kb"].map((m) => (
-            <button key={m} data-testid={`opening-mode-${m}`} onClick={() => saveOrg({ opening_mode: m })}
-              className={`flex-1 h-10 rounded-sm text-sm font-semibold capitalize border ${org.opening_mode === m ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:bg-accent"}`}>
-              {m === "kb" ? "From company overview" : "Scripted"}
-            </button>
-          ))}
-        </div>
-        <Sel label="Creativity / variation" testid="opening-creativity" value={org.opening_creativity || "medium"} onChange={(e) => saveOrg({ opening_creativity: e.target.value })}
-          options={[{ value: "low", label: "Low" }, { value: "medium", label: "Medium" }, { value: "high", label: "High" }]} />
-        <F label="Max opening length (chars)" testid="opening-maxlen" type="number" value={org.opening_max_length ?? 220} onChange={(e) => saveOrg({ opening_max_length: parseInt(e.target.value) || 220 })} />
-        <p className="text-xs text-muted-foreground">The AI sales agent uses your ACTIVE company overview documents below to talk about the company and answer questions during calls. In "From company overview" mode, the opening line is generated from them too (falls back to scripted if unavailable).</p>
-      </Section>
-
-      <Section icon={BookBookmark} title="Company Overview Documents">
+      <Section icon={BookBookmark} title="Add a company document">
         <div className="flex items-center gap-2">
           <label data-testid="kb-upload-label" className="inline-flex items-center gap-1.5 h-9 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent cursor-pointer">
             <UploadSimple size={15} weight="bold" /> Upload .pdf / .txt
@@ -319,25 +348,55 @@ function OpeningTab() {
         </div>
         <div className="space-y-2">
           <F label="Title" testid="kb-title" value={entry.title} onChange={(e) => setEntry({ ...entry, title: e.target.value })} />
-          <textarea data-testid="kb-content" value={entry.content} onChange={(e) => setEntry({ ...entry, content: e.target.value })} rows={3} placeholder="Paste company info, products, FAQs, pricing…"
+          <textarea data-testid="kb-content" value={entry.content} onChange={(e) => setEntry({ ...entry, content: e.target.value })} rows={4} placeholder="Paste company info, products, FAQs, pricing…"
             className="w-full rounded-sm border border-input bg-card p-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
           <button data-testid="kb-add" onClick={addEntry} className="inline-flex items-center gap-1.5 h-9 px-3 bg-foreground text-background rounded-sm text-sm font-medium"><Plus size={15} weight="bold" /> Add document</button>
         </div>
-        <div className="max-h-56 overflow-y-auto space-y-1.5">
+        <p className="text-xs text-muted-foreground">Active documents feed the live AI agent so it can talk about your company and answer off-script questions during calls.</p>
+      </Section>
+
+      <Section icon={BookBookmark} title="Company Overview Documents">
+        {kb.length === 0 && <div className="text-sm text-muted-foreground py-6 text-center border border-dashed border-border rounded-sm">No documents yet — add one on the left.</div>}
+        <div className="max-h-[28rem] overflow-y-auto space-y-1.5">
           {kb.map((k) => {
             const active = k.active !== false;
             return (
-              <div key={k.id} className={`flex items-center justify-between border rounded-sm px-3 py-2 ${active ? "border-success/40 bg-success/5" : "border-border opacity-60"}`}>
-                <div className="min-w-0"><div className="text-sm font-medium truncate">{k.title}</div><div className="text-xs text-muted-foreground capitalize">{k.source} · {active ? "active" : "disabled"}</div></div>
-                <div className="flex items-center gap-2">
-                  <button data-testid={`kb-toggle-${k.id}`} onClick={() => toggle(k.id)} className={`text-xs font-semibold px-2 h-7 rounded-sm border ${active ? "border-success/40 text-success" : "border-border text-muted-foreground"}`}>{active ? "Active" : "Disabled"}</button>
-                  <button data-testid={`kb-delete-${k.id}`} onClick={() => remove(k.id)} className="text-muted-foreground hover:text-destructive"><Trash size={14} /></button>
+              <div key={k.id} data-testid={`kb-item-${k.id}`} className={`border rounded-sm px-3 py-2 ${active ? "border-success/40 bg-success/5" : "border-border opacity-70"}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0"><div className="text-sm font-medium truncate">{k.title}</div><div className="text-xs text-muted-foreground capitalize">{k.source} · {active ? "active" : "disabled"} · {(k.content || "").length} chars</div></div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <button data-testid={`kb-view-${k.id}`} onClick={() => setViewing(k)} className="text-xs font-semibold px-2 h-7 rounded-sm border border-border text-muted-foreground hover:bg-accent">View</button>
+                    <button data-testid={`kb-edit-${k.id}`} onClick={() => setEditing({ id: k.id, title: k.title, content: k.content || "" })} className="text-muted-foreground hover:text-primary"><PencilSimple size={15} /></button>
+                    <button data-testid={`kb-toggle-${k.id}`} onClick={() => toggle(k.id)} className={`text-xs font-semibold px-2 h-7 rounded-sm border ${active ? "border-success/40 text-success" : "border-border text-muted-foreground"}`}>{active ? "Active" : "Disabled"}</button>
+                    <button data-testid={`kb-delete-${k.id}`} onClick={() => remove(k.id)} className="text-muted-foreground hover:text-destructive"><Trash size={14} /></button>
+                  </div>
                 </div>
               </div>
             );
           })}
         </div>
       </Section>
+
+      <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader><DialogTitle className="font-display" data-testid="kb-view-title">{viewing?.title}</DialogTitle></DialogHeader>
+          <pre data-testid="kb-view-content" className="text-xs whitespace-pre-wrap max-h-[60vh] overflow-y-auto bg-accent rounded-sm p-3 font-mono">{viewing?.content}</pre>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader><DialogTitle className="font-display">Edit document</DialogTitle></DialogHeader>
+          {editing && (
+            <div className="space-y-3">
+              <F label="Title" testid="kb-edit-title" value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} />
+              <textarea data-testid="kb-edit-content" value={editing.content} onChange={(e) => setEditing({ ...editing, content: e.target.value })} rows={12}
+                className="w-full rounded-sm border border-input bg-card p-2.5 text-xs font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+            </div>
+          )}
+          <DialogFooter><button data-testid="kb-save-edit" onClick={saveEdit} className="h-10 px-4 bg-primary text-primary-foreground rounded-sm text-sm font-medium">Save changes</button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

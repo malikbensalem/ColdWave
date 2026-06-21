@@ -74,6 +74,7 @@ class OrgUpdateRequest(BaseModel):
     opening_mode: Optional[str] = None         # "scripted" | "kb"
     opening_creativity: Optional[str] = None   # "low" | "medium" | "high"
     opening_max_length: Optional[int] = None
+    ai_system_prompt: Optional[str] = None     # org-level extension to the global AI prompt
 
 
 # ---------- CRM ----------
@@ -179,3 +180,52 @@ class LLMTestRequest(BaseModel):
 
 class KBToggleRequest(BaseModel):
     active: bool
+
+
+# ---------- Voice characteristics ----------
+class VoiceCharacteristicsUpdate(BaseModel):
+    name: Optional[str] = None
+    persona: Optional[str] = None
+
+
+# ---------- Impersonation ----------
+class ImpersonateRequest(BaseModel):
+    user_id: str
+
+
+# ---------- Global platform settings (owner) ----------
+class GlobalSettingsUpdate(BaseModel):
+    ai_system_prompt: str = ""
+
+
+# ---------- KB edit ----------
+class KBUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+
+
+# ---------- Email integration / campaigns ----------
+class EmailIntegrationUpdate(BaseModel):
+    provider: Literal["gmail", "o365"]
+    account_email: str = ""
+
+
+class EmailCampaignCreate(BaseModel):
+    name: str
+    subject: str
+    body: str
+    schedule_type: Literal["now", "scheduled", "recurring"] = "now"
+    scheduled_at: Optional[str] = None  # ISO datetime
+    recurrence: Optional[Literal["daily", "weekly", "monthly"]] = None
+    audience: Literal["all", "positive", "contacted", "consented"] = "all"
+
+
+class EmailCampaignUpdate(BaseModel):
+    name: Optional[str] = None
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    schedule_type: Optional[Literal["now", "scheduled", "recurring"]] = None
+    scheduled_at: Optional[str] = None
+    recurrence: Optional[Literal["daily", "weekly", "monthly"]] = None
+    audience: Optional[Literal["all", "positive", "contacted", "consented"]] = None
+    status: Optional[str] = None

@@ -46,6 +46,20 @@ export function AuthProvider({ children }) {
     setUser(data);
   };
 
+  const impersonate = async (userId) => {
+    const { data } = await api.post("/auth/impersonate", { user_id: userId });
+    if (data.access_token) setToken(data.access_token);
+    setUser(data);
+    return data;
+  };
+
+  const stopImpersonation = async () => {
+    const { data } = await api.post("/auth/stop-impersonation");
+    if (data.access_token) setToken(data.access_token);
+    setUser(data);
+    return data;
+  };
+
   const logout = async () => {
     try { await api.post("/auth/logout"); } catch {}
     setToken(null);
@@ -54,7 +68,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, setUser, applyAuth, loading, login, register, logout, checkAuth, apiErr }}>
+    <AuthContext.Provider value={{ user, setUser, applyAuth, loading, login, register, logout, checkAuth, impersonate, stopImpersonation, apiErr }}>
       {children}
     </AuthContext.Provider>
   );

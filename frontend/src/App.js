@@ -9,6 +9,8 @@ import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Leads from "./pages/Leads";
 import Campaigns from "./pages/Campaigns";
+import EmailCampaigns from "./pages/EmailCampaigns";
+import PlatformAdmin from "./pages/PlatformAdmin";
 import TestCalls from "./pages/TestCalls";
 import Messaging from "./pages/Messaging";
 import Compliance from "./pages/Compliance";
@@ -41,6 +43,8 @@ function AppRoutes() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/leads" element={<Leads />} />
         <Route path="/campaigns" element={<Campaigns />} />
+        <Route path="/email-campaigns" element={<EmailCampaigns />} />
+        <Route path="/admin" element={<PlatformAdmin />} />
         <Route path="/test-calls" element={<TestCalls />} />
         <Route path="/messaging" element={<Messaging />} />
         <Route path="/compliance" element={<Compliance />} />

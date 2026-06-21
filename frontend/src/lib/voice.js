@@ -26,3 +26,29 @@ export function speakMock(text, gender = "female") {
 export function stopSpeak() {
   try { window.speechSynthesis?.cancel(); } catch {}
 }
+
+// Managed HTML audio player so a single Stop control can halt real (ElevenLabs) playback.
+let currentAudio = null;
+
+export function playAudio(url, onEnded) {
+  stopAudio();
+  stopSpeak();
+  const audio = new Audio(url);
+  currentAudio = audio;
+  audio.onended = () => { currentAudio = null; onEnded && onEnded(); };
+  audio.onerror = () => { currentAudio = null; onEnded && onEnded(); };
+  audio.play().catch(() => { currentAudio = null; onEnded && onEnded(); });
+  return audio;
+}
+
+export function stopAudio() {
+  if (currentAudio) {
+    try { currentAudio.pause(); currentAudio.currentTime = 0; } catch {}
+    currentAudio = null;
+  }
+}
+
+export function stopAll() {
+  stopAudio();
+  stopSpeak();
+}

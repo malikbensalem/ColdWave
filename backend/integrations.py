@@ -13,13 +13,26 @@ EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
 # UK-focused AI voice catalog (ElevenLabs voice IDs where available)
 VOICE_CATALOG = [
-    {"id": "george",  "name": "George",   "gender": "male",   "accent": "British",  "description": "Warm, mature UK male — trustworthy and calm.", "elevenlabs_voice_id": "JBFqnCBsd6RMkjVDRZzb"},
-    {"id": "charlie", "name": "Charlie",  "gender": "male",   "accent": "British",  "description": "Confident young UK male — energetic closer.",   "elevenlabs_voice_id": "IKne3meq5aSn9XLyUdCD"},
-    {"id": "daniel",  "name": "Daniel",   "gender": "male",   "accent": "British",  "description": "Authoritative UK male — corporate and clear.",  "elevenlabs_voice_id": "onwK4e9ZLuTAKqWW03F9"},
-    {"id": "alice",   "name": "Alice",    "gender": "female", "accent": "British",  "description": "Professional UK female — clear and friendly.",  "elevenlabs_voice_id": "Xb7hH8MSUJpSbSDYk0k2"},
-    {"id": "lily",    "name": "Lily",     "gender": "female", "accent": "British",  "description": "Soft, approachable UK female — great rapport.", "elevenlabs_voice_id": "pFZP5JQG7iQjIQuC4Bku"},
-    {"id": "matilda", "name": "Matilda",  "gender": "female", "accent": "American", "description": "Bright US female — upbeat and persuasive.",    "elevenlabs_voice_id": "XrExE9yKIg1WjnnlVkGX"},
+    {"id": "george",  "name": "George",   "gender": "male",   "accent": "British",  "description": "Warm, mature UK male — trustworthy and calm.", "persona": "A warm, seasoned account executive who builds trust through calm, measured conversation.", "elevenlabs_voice_id": "JBFqnCBsd6RMkjVDRZzb"},
+    {"id": "charlie", "name": "Charlie",  "gender": "male",   "accent": "British",  "description": "Confident young UK male — energetic closer.",   "persona": "An energetic young sales rep who is upbeat, confident and great at moving the conversation to a close.", "elevenlabs_voice_id": "IKne3meq5aSn9XLyUdCD"},
+    {"id": "daniel",  "name": "Daniel",   "gender": "male",   "accent": "British",  "description": "Authoritative UK male — corporate and clear.",  "persona": "A polished, authoritative business development manager who speaks clearly and professionally.", "elevenlabs_voice_id": "onwK4e9ZLuTAKqWW03F9"},
+    {"id": "alice",   "name": "Alice",    "gender": "female", "accent": "British",  "description": "Professional UK female — clear and friendly.",  "persona": "A friendly, professional sales consultant who is clear, approachable and helpful.", "elevenlabs_voice_id": "Xb7hH8MSUJpSbSDYk0k2"},
+    {"id": "lily",    "name": "Lily",     "gender": "female", "accent": "British",  "description": "Soft, approachable UK female — great rapport.", "persona": "A soft-spoken, empathetic representative who quickly builds rapport and puts people at ease.", "elevenlabs_voice_id": "pFZP5JQG7iQjIQuC4Bku"},
+    {"id": "matilda", "name": "Matilda",  "gender": "female", "accent": "American", "description": "Bright US female — upbeat and persuasive.",    "persona": "A bright, persuasive US-based account manager who is upbeat and enthusiastic.", "elevenlabs_voice_id": "XrExE9yKIg1WjnnlVkGX"},
 ]
+
+# Selectable ElevenLabs models (dropdown in Settings).
+ELEVENLABS_MODELS = [
+    "eleven_multilingual_v2",
+    "eleven_turbo_v2_5",
+    "eleven_turbo_v2",
+    "eleven_flash_v2_5",
+    "eleven_monolingual_v1",
+]
+
+
+def get_elevenlabs_models():
+    return ELEVENLABS_MODELS
 
 
 def get_voice(voice_id: str):
@@ -113,10 +126,12 @@ async def validate_llm_key(provider: str, api_key: str, model: str = "") -> dict
 
 def _chat(session_id: str, system_message: str, org: dict = None) -> LlmChat:
     cfg = llm_config(org or {})
+    prefix = (org or {}).get("_system_prefix", "")
+    sys_msg = f"{prefix}\n\n{system_message}" if prefix else system_message
     return LlmChat(
         api_key=cfg["api_key"],
         session_id=session_id,
-        system_message=system_message,
+        system_message=sys_msg,
     ).with_model(cfg["provider"], cfg["model"])
 
 

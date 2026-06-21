@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 4 testing: owner role, impersonation (owner & admin scoped), Platform Admin endpoints, voices (ElevenLabs models + characteristics override), Email Campaigns (connect, send-now, scheduled, send-now action, delete), KB edit, global AI prompt. Backend: 15/15 new tests in /app/backend/tests/test_iteration4.py PASS (legacy suites unchanged). Frontend: Platform Admin flow (owner login, Businesses tab, Users w/ Impersonate, banner appears + Stop returns to owner, Global Prompt save), Email Campaigns full flow, Settings > Company Overview (label correct, 'Opening Line Mode' gone, add/view/edit/save/toggle/delete present), Campaigns > Voices (sample text + previews + edit-voice modal + save), Settings > Integrations (no Stability/Similarity/Style, eleven-model is <select>, eleven-key + llm-key inputs present), watermark absent. ONE frontend miss: voice-stop-all control is not rendered in Campaigns > Voices tab.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Campaigns > Voices tab", "issue": "Required testid `voice-stop-all` (the Stop control that halts ongoing voice preview) is not rendered. preview-voice-<id> buttons (6) and voice-sample-text textarea exist, but there is no voice-stop-all button in the DOM. Spec requires: 'a Stop control halts it'.", "selector": "[data-testid=voice-stop-all]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Add the voice-stop-all button on Campaigns > Voices tab and wire it to stop any active preview (browser SpeechSynthesis.cancel() + any HTMLAudioElement.pause for ElevenLabs URLs). Required by spec testid voice-stop-all."
+  ],
+  "critical_code_review_comments": [
+    "Backend impersonation (auth.py) correctly enforces: owner can impersonate anyone; admin restricted to same-org and cannot impersonate owners; user cannot impersonate self; cannot stack impersonation. require_owner correctly checks _impersonator.role so an impersonating owner does NOT lose owner privileges via the JWT but require_owner endpoints only allow real-owners (admin endpoints stay owner-only even mid-impersonation). Good.",
+    "attach_system_prefix (routes.py) PREPENDS global prompt then org prompt — matches spec.",
+    "GET /api/admin/users joins org_name client-side via in-memory orgmap — fine for current scale; consider $lookup for large tenant counts.",
+    "Email scheduler loop polls every 30s; date comparison uses ISO-string lexical compare ({'$lte': now.isoformat()}) — works only because all timestamps stored are UTC ISO with the same format/length. Document this invariant or switch to native datetime in Mongo to avoid future timezone-formatting drift.",
+    "_mock_send filters opted_out and empty email — correct. Send-now action also adds to sent_count (idempotent re-sends not prevented; might double-count if user spam-clicks). Consider disabling the send-now button while pending.",
+    "/api/voices returns display_name + persona + customized + elevenlabs_enabled — matches spec.",
+    "kb.py PUT /{kb_id} ignores unknown fields and audits before/after title — good. Updating with empty body returns current entry unchanged.",
+    "Frontend Settings.IntegrationsTab no longer shows Stability/Similarity/Style — verified live. eleven-model rendered as a native <select>. Auto-validate-on-paste behavior was not explicitly re-checked this iteration (covered in iter 3); known sticky-LLM-key bug from iter 3 still applies — see iteration_3.json for repro and mitigation."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py (new — 15 tests for iter 4)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated for iter 4 suite)",
+    "/app/test_reports/iteration_4.json"
+  ],
+  "success_rate": {"backend": "15/15 = 100% on iter4 suite", "frontend": "~95% — all flows pass except missing voice-stop-all testid"},
+  "test_credentials": "owner@coldwave.ai / Owner123!  AND  admin@coldwave.ai / Admin123! — both confirmed working. /app/memory/test_credentials.md is correct.",
+  "seed_data_creation": "All TEST_ data created (KB entry, email campaigns, voice characteristics override on 'george', global prompt) was cleaned up via DELETE / reset PUTs at end of each test. Admin colleague user TEST_colleague_* was deleted. No residual TEST_ records.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iteration 4 backend suite: /app/backend/tests/test_iteration4.py (15 tests). To run all: REACT_APP_BACKEND_URL=https://dialflow-crm-1.preview.emergentagent.com pytest /app/backend/tests/ -v. Login button is a native <button>Sign in</button> WITHOUT type='submit' — use get_by_role('button', name='Sign in'), NOT 'button[type=submit]'. To switch users in playwright, page.context.clear_cookies() before re-login (logout via fetch does not clear httpOnly cookies cross-domain in tests). Mailbox connection persists per-org so email-provider-select control may not render once already connected — go straight to new-email-campaign-button. Open issue from iter 3 (sticky LLM key on provider switch) is still open and NOT re-tested in this iteration. Iter4 new bug: voice-stop-all testid is missing in Campaigns > Voices.",
+  "rca of the issue": "Missing voice-stop-all: in /app/frontend/src/pages/Campaigns.jsx (Voices tab) or /app/frontend/src/lib/voice.js the preview buttons trigger window.speechSynthesis.speak / HTMLAudioElement.play but no global stop affordance is rendered. To fix: render <button data-testid='voice-stop-all' onClick={() => { window.speechSynthesis?.cancel(); /* and pause any currently-playing <audio> */ }}>Stop</button> in the Voices tab header, and (optionally) hook it via lib/voice.js so currently-playing ElevenLabs audio elements are also paused."
+}

@@ -1,13 +1,15 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
 import {
-  ChartLineUp, Users, Megaphone, PhoneCall, ShieldCheck, Gear, SignOut, Waveform, WhatsappLogo,
+  ChartLineUp, Users, Megaphone, PhoneCall, ShieldCheck, Gear, SignOut, Waveform, WhatsappLogo, EnvelopeSimple, Crown, UserSwitch,
 } from "@phosphor-icons/react";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: ChartLineUp, testid: "nav-dashboard" },
   { to: "/leads", label: "CRM / Leads", icon: Users, testid: "nav-leads" },
   { to: "/campaigns", label: "Campaigns", icon: Megaphone, testid: "nav-campaigns" },
+  { to: "/email-campaigns", label: "Email Campaigns", icon: EnvelopeSimple, testid: "nav-email-campaigns" },
   { to: "/test-calls", label: "Test Calls", icon: PhoneCall, testid: "nav-test-calls" },
   { to: "/messaging", label: "WhatsApp", icon: WhatsappLogo, testid: "nav-messaging" },
   { to: "/compliance", label: "Compliance", icon: ShieldCheck, testid: "nav-compliance" },
@@ -15,8 +17,14 @@ const NAV = [
 ];
 
 export default function Layout() {
-  const { user, logout } = useAuth();
+  const { user, logout, stopImpersonation } = useAuth();
   const navigate = useNavigate();
+  const isOwner = user?.role === "owner" || user?.impersonator?.role === "owner";
+
+  const handleStop = async () => {
+    try { await stopImpersonation(); toast.success("Returned to your account"); navigate("/admin"); }
+    catch { toast.error("Could not stop impersonation"); }
+  };
 
   return (
     <div className="w-full h-screen flex overflow-hidden bg-background">
@@ -32,6 +40,20 @@ export default function Layout() {
         </div>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+          {isOwner && (
+            <NavLink
+              to="/admin"
+              data-testid="nav-admin"
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2.5 rounded-sm text-sm font-medium transition-colors ${
+                  isActive ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                }`
+              }
+            >
+              <Crown size={18} weight="bold" />
+              Platform Admin
+            </NavLink>
+          )}
           {NAV.map((n) => (
             <NavLink
               key={n.to}
@@ -68,6 +90,17 @@ export default function Layout() {
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {user?.impersonating && (
+          <div data-testid="impersonation-banner" className="flex-shrink-0 bg-warning text-warning-foreground px-6 py-2 flex items-center justify-between text-sm font-medium">
+            <span className="flex items-center gap-2">
+              <UserSwitch size={16} weight="bold" />
+              Impersonating <b>{user?.name}</b> ({user?.email}) — acting on behalf of {user?.org_name}
+            </span>
+            <button data-testid="stop-impersonation-button" onClick={handleStop} className="inline-flex items-center gap-1.5 h-7 px-3 rounded-sm bg-foreground text-background text-xs font-semibold hover:opacity-90">
+              <SignOut size={13} weight="bold" /> Stop impersonating
+            </button>
+          </div>
+        )}
         <header className="h-16 flex-shrink-0 border-b border-border bg-card flex items-center justify-between px-6">
           <div className="flex items-center gap-2">
             <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Workspace</span>

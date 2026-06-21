@@ -9,12 +9,13 @@ from models import (
     CampaignCreate, CampaignUpdate, VoicePreviewRequest, TestCallStartRequest,
     TestCallTurnRequest, DNCAddRequest, ErasureRequest, OrgUpdateRequest,
     IntegrationSettings, InviteUserRequest, UpdateUserRequest, ElevenLabsTestRequest,
-    LLMTestRequest, now_utc, new_id,
+    LLMTestRequest, VoiceCharacteristicsUpdate, now_utc, new_id,
 )
 from integrations import (
     VOICE_CATALOG, get_voice, generate_voice_preview, generate_script,
     agent_reply, analyze_transcript, generate_tts, select_tts_provider,
     validate_elevenlabs_key, generate_kb_opening, get_llm_models, validate_llm_key, llm_config,
+    get_elevenlabs_models,
 )
 from audit import record_audit
 from kb import get_kb_entries
@@ -34,6 +35,17 @@ async def audit(org_id: str, user: dict, action: str, detail: str = "", entity: 
 def clean(doc: dict) -> dict:
     doc.pop("_id", None)
     return doc
+
+
+async def attach_system_prefix(org: dict) -> dict:
+    """Resolve the effective AI system prefix (global owner prompt + org extension)."""
+    if not org:
+        return org
+    settings = await db.platform_settings.find_one({"id": "platform"}, {"_id": 0})
+    global_p = (settings or {}).get("ai_system_prompt", "")
+    org_p = org.get("ai_system_prompt", "")
+    parts = [p for p in [global_p, org_p] if p]
+    return {**org, "_system_prefix": "\n\n".join(parts)} if parts else org
 
 
 # ---------------- Dashboard ----------------
@@ -158,6 +170,7 @@ async def create_script(req: ScriptCreate, user: dict = Depends(get_current_user
 @router.post("/scripts/generate")
 async def ai_generate_script(req: GenerateScriptRequest, user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    org = await attach_system_prefix(org)
     content = await generate_script(
         req.product, req.audience, req.objective, req.tone,
         session_id=f"script_{user['org_id']}", script_type=req.script_type,
@@ -220,8 +233,41 @@ async def delete_campaign(campaign_id: str, user: dict = Depends(get_current_use
 @router.get("/voices")
 async def list_voices(user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
-    enabled = bool((org or {}).get("integrations", {}).get("elevenlabs_api_key"))
-    return {"voices": VOICE_CATALOG, "elevenlabs_enabled": enabled}
+    integ = (org or {}).get("integrations", {})
+    enabled = bool(integ.get("elevenlabs_api_key") and integ.get("elevenlabs_enabled"))
+    overrides = (org or {}).get("voice_characteristics", {})
+    voices = []
+    for v in VOICE_CATALOG:
+        ov = overrides.get(v["id"], {})
+        voices.append({
+            **v,
+            "display_name": ov.get("name") or v["name"],
+            "persona": ov.get("persona") or v.get("persona", ""),
+            "customized": bool(ov.get("name") or ov.get("persona")),
+        })
+    return {"voices": voices, "elevenlabs_enabled": enabled}
+
+
+@router.put("/voices/{voice_id}/characteristics")
+async def update_voice_characteristics(voice_id: str, req: VoiceCharacteristicsUpdate, user: dict = Depends(require_admin)):
+    if not get_voice(voice_id):
+        raise HTTPException(404, "Voice not found")
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    chars = (org or {}).get("voice_characteristics", {})
+    cur = chars.get(voice_id, {})
+    if req.name is not None:
+        cur["name"] = req.name
+    if req.persona is not None:
+        cur["persona"] = req.persona
+    chars[voice_id] = cur
+    await db.organizations.update_one({"id": user["org_id"]}, {"$set": {"voice_characteristics": chars}})
+    await audit(user["org_id"], user, "voice_characteristics_update", voice_id, entity="voice", entity_id=voice_id, after=cur)
+    return {"voice_id": voice_id, **cur}
+
+
+@router.get("/elevenlabs/models")
+async def elevenlabs_models(user: dict = Depends(get_current_user)):
+    return {"models": get_elevenlabs_models()}
 
 
 @router.post("/voices/preview")
@@ -281,6 +327,7 @@ def within_calling_hours(org: dict) -> dict:
 @router.post("/calls/test/start")
 async def start_test_call(req: TestCallStartRequest, user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    org = await attach_system_prefix(org)
     script_id = req.script_id
     voice_id = req.voice_id
     if req.campaign_id:
@@ -330,6 +377,14 @@ async def start_test_call(req: TestCallStartRequest, user: dict = Depends(get_cu
 
     voice = get_voice(voice_id) if voice_id else None
 
+    # Inject the voice's identity (name + persona) so the agent knows who it is if asked.
+    if voice:
+        ov = (org or {}).get("voice_characteristics", {}).get(voice_id, {})
+        vname = ov.get("name") or voice["name"]
+        vpersona = ov.get("persona") or voice.get("persona", "")
+        identity = f"Your name is {vname}. {vpersona}".strip()
+        company_overview = f"[YOUR IDENTITY]\n{identity}\n\n{company_overview}".strip()
+
     # TTS: deterministic provider selection (ElevenLabs when configured) — no silent fallback
     tts = await generate_tts(org, voice_id, opening) if voice_id else {"provider": "browser", "audio_url": None, "reason": "no_voice", "error": None}
 
@@ -356,6 +411,7 @@ async def start_test_call(req: TestCallStartRequest, user: dict = Depends(get_cu
 @router.post("/calls/test/turn")
 async def test_call_turn(req: TestCallTurnRequest, user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    org = await attach_system_prefix(org)
     call = await db.calls.find_one({"id": req.call_id, "org_id": user["org_id"]}, {"_id": 0})
     if not call:
         raise HTTPException(404, "Call not found")
