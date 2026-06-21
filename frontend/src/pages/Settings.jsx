@@ -132,10 +132,21 @@ function IntegrationsTab() {
           <Sel label="Model" testid="llm-model" value={data.llm_model} onChange={set("llm_model")} options={(llmModels[data.llm_provider] || []).map((m) => ({ value: m, label: m }))} />
         </div>
         <F label={`${data.llm_provider} API key (optional — leave blank to use the Emergent key)`} testid="llm-key" type="password"
-          value={data[PROVIDER_KEY[data.llm_provider]] || ""} onChange={set(PROVIDER_KEY[data.llm_provider])} placeholder="Bring your own key…" />
+          value={data[PROVIDER_KEY[data.llm_provider]] || ""} onChange={set(PROVIDER_KEY[data.llm_provider])} placeholder="Bring your own key for the selected provider…" />
         <div className="flex items-center gap-3">
           <button data-testid="validate-llm-button" onClick={validateLlm} disabled={llmBusy} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">{llmBusy ? "Checking…" : "Validate key"}</button>
           {llmStatus && <span data-testid="llm-validate-result" className={`text-xs ${llmStatus.valid ? "text-success" : "text-destructive"}`}>{llmStatus.message}</span>}
+        </div>
+        <div className="text-xs text-muted-foreground border-t border-border pt-2 mt-1">
+          <div className="font-semibold mb-1 text-foreground">Saved provider keys (what you save is exactly what's shown):</div>
+          <div className="flex flex-wrap gap-2">
+            {["openai", "anthropic", "gemini"].map((p) => (
+              <span key={p} data-testid={`llm-key-status-${p}`} className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm border ${data[PROVIDER_KEY[p]] ? "border-success/40 bg-success/10 text-success" : "border-border"}`}>
+                <span className="capitalize">{p}</span>{data[PROVIDER_KEY[p]] ? "set" : "—"}
+                {data[PROVIDER_KEY[p]] && <button type="button" data-testid={`llm-key-clear-${p}`} onClick={() => setData({ ...data, [PROVIDER_KEY[p]]: "" })} className="ml-0.5 hover:text-destructive">✕</button>}
+              </span>
+            ))}
+          </div>
         </div>
         <p className="text-xs text-muted-foreground">Powers scripts, live test-call conversation, and transcript analysis. Add your own provider key to use your account; otherwise the Emergent Universal key is used.</p>
       </Section>

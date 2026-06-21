@@ -46,4 +46,10 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - ElevenLabs fix: deterministic `select_tts_provider`/`generate_tts`; test calls now use ElevenLabs (model+stability/style applied) with no silent fallback; key Validate endpoint+button.
 - Audit log: append-only `record_audit` (actor, action, entity, before/after diff, source IP, UTC, correlation id via middleware); `GET /api/audit` filters; Settings→Audit viewer.
 - KB opening mode: scripted vs KB-guided openings with guardrails + fallback; KB paste + pdf/txt upload; Settings→Opening & KB.
-- Tests: `backend/tests/` pytest (49 passing). Docs: README + CHANGELOG.
+- Tests: `backend/tests/` pytest (53 passing). Docs: README + CHANGELOG.
+
+## Iteration 1.2 (2026-06-21) — BYO models, company overview, script types, Windows
+- Windows easy setup: `start.bat` (validates deps/env/Mongo, opens backend+frontend) + README Windows section.
+- Bring-your-own LLM keys: per-workspace OpenAI/Anthropic/Gemini keys (falls back to Emergent key); provider + **model dropdowns** (`GET /api/llm/models`); `POST /api/settings/integrations/llm/test` validates a key (distinguishes valid / quota-exceeded / invalid). Saved-keys transparency row with per-provider clear (fixes sticky-key bug).
+- Company Overview (renamed from Opening & KB): upload/paste company docs, **activate/disable multiple** (`active` flag + `PUT /api/kb/{id}/toggle`). Active docs feed the live agent so it can answer off-script company questions, and (in KB opening mode) the opening line.
+- Script types: **line-by-line** (follows script; answers unaccounted questions from company overview) and **personality-driven** (persona generates a unique conversation). Stored on script; agent behavior branches by type.
