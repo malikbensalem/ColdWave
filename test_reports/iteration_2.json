@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 2 testing of ColdWave AI: WhatsApp messaging, ElevenLabs Test Call, Audit log, KB opening mode, one-command startup. Both backend pytest (49/49) and frontend Playwright (all 5 feature areas + login regression) pass end-to-end against the public preview URL. All flows revert workspace to clean mock/scripted state.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration2_api.py",
+    "/app/backend/tests/test_coldwave_api.py",
+    "/app/backend/tests/test_messaging.py",
+    "/app/backend/tests/test_audit_kb.py",
+    "/app/backend/tests/test_tts_selection.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Test Calls page uses native HTML <select> elements (not Radix Select). This is fine and accessible, but the system prompt examples assume Radix - any future Playwright author should use page.select_option('[data-testid=setup-voice]', ...) instead of clicking [role=option].",
+    "ElevenLabs key input testid is 'eleven-key' (not 'eleven-api-key' as the testing request implied). Consider aligning testid names with the spec for clarity, or update the spec.",
+    "Login response uses 'access_token' key (not 'token'); the brief in the testing request says token is in localStorage as 'coldwave_token' which is correct - just noting the API response field name for the next testing agent.",
+    "KB sources from prior test runs accumulated ('TEST FAQ', 'TEST_Company FAQ' x3) - the KB delete endpoint exists and works, but pytest fixture cleanup is best-effort; consider adding an admin 'wipe TEST_*' helper for repeatable seeded testing.",
+    "CORS still allow_origins=['*'] with allow_credentials=True (carried over from iteration 1) - already noted; not a regression."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration2_api.py (created)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated)",
+    "/app/test_reports/iteration_2.json (this file)"
+  ],
+  "success_rate": {"backend": "49/49 = 100%", "frontend": "100% on all 5 new feature areas + login regression"},
+  "test_credentials": "admin@coldwave.ai / Admin123! (seeded). /app/memory/test_credentials.md present and accurate.",
+  "seed_data_creation": "No new permanent seed data. Test-created records (TEST_ contact, TEST FAQ KB entries, TEST DNC entries, audit entries) added during runs; KB entries left intact (their delete loop in the playwright run is non-destructive). Workspace integration toggles + opening mode fully reverted to default (mock/scripted).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Two backend test files now cover the platform: test_coldwave_api.py (baseline 22) + test_iteration2_api.py (new 11). All 49 backend tests pass via `pytest /app/backend/tests/ -v`. Key endpoints confirmed: GET /api/health, GET /api/webhooks/whatsapp (verify token coldwave-verify-token), POST /api/messages/whatsapp/send, GET /api/messages, GET /api/messages/dead-letters, POST /api/settings/integrations/elevenlabs/test, GET/PUT /api/settings/integrations, GET/PUT /api/settings/org, POST /api/calls/test/start (returns tts_provider+audio_url+opening_meta), GET /api/audit (rows have ip, correlation_id, ISO UTC created_at), POST/DELETE /api/kb. ElevenLabs test key (sk_fe1b...) returns 21 voices when valid. Frontend testid map: eleven-key (NOT eleven-api-key), validate-eleven-button, eleven-validate-result, eleven-enabled, save-integrations-button, tab-integrations/org/opening/users/audit/playbook, kb-title/kb-content/kb-add/kb-upload, opening-mode-kb / opening-mode-scripted, setup-voice (native select - use select_option), start-call-button, end-call-button, call-diagnostics, wa-to/wa-body/wa-send. Static startup artifacts present: /app/start.sh (+x), /app/Makefile has dev target, /app/backend/.env.example, /app/frontend/.env.example all exist.",
+  "rca of the issue": "N/A - no defects found this iteration. Initial test failures were all in the test code (wrong endpoint paths e.g. /api/integrations vs /api/settings/integrations, wrong testid eleven-api-key vs eleven-key, /api/voices returning {voices:[...]} object, native select vs Radix); fixed and re-run all green."
+}

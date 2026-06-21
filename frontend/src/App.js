@@ -10,6 +10,7 @@ import Dashboard from "./pages/Dashboard";
 import Leads from "./pages/Leads";
 import Campaigns from "./pages/Campaigns";
 import TestCalls from "./pages/TestCalls";
+import Messaging from "./pages/Messaging";
 import Compliance from "./pages/Compliance";
 import Settings from "./pages/Settings";
 
@@ -41,6 +42,7 @@ function AppRoutes() {
         <Route path="/leads" element={<Leads />} />
         <Route path="/campaigns" element={<Campaigns />} />
         <Route path="/test-calls" element={<TestCalls />} />
+        <Route path="/messaging" element={<Messaging />} />
         <Route path="/compliance" element={<Compliance />} />
         <Route path="/settings" element={<Settings />} />
       </Route>

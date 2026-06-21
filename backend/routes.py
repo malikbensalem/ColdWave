@@ -8,12 +8,15 @@ from models import (
     ContactCreate, ContactUpdate, ScriptCreate, ScriptUpdate, GenerateScriptRequest,
     CampaignCreate, CampaignUpdate, VoicePreviewRequest, TestCallStartRequest,
     TestCallTurnRequest, DNCAddRequest, ErasureRequest, OrgUpdateRequest,
-    IntegrationSettings, InviteUserRequest, UpdateUserRequest, now_utc, new_id,
+    IntegrationSettings, InviteUserRequest, UpdateUserRequest, ElevenLabsTestRequest, now_utc, new_id,
 )
 from integrations import (
     VOICE_CATALOG, get_voice, generate_voice_preview, generate_script,
-    agent_reply, analyze_transcript,
+    agent_reply, analyze_transcript, generate_tts, select_tts_provider,
+    validate_elevenlabs_key, generate_kb_opening,
 )
+from audit import record_audit
+from kb import get_kb_entries
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["app"])
@@ -21,11 +24,10 @@ router = APIRouter(prefix="/api", tags=["app"])
 PIPELINE_STATUSES = ["new", "contacted", "positive", "callback", "opted_out", "dnc"]
 
 
-async def audit(org_id: str, user: dict, action: str, detail: str = ""):
-    await db.audit_logs.insert_one({
-        "id": new_id("log"), "org_id": org_id, "user_email": user.get("email", ""),
-        "action": action, "detail": detail, "created_at": now_utc().isoformat(),
-    })
+async def audit(org_id: str, user: dict, action: str, detail: str = "", entity: str = "system",
+                entity_id: str = "", before: dict = None, after: dict = None):
+    await record_audit(org_id, user.get("email", "system"), action, entity, entity_id,
+                       before=before, after=after, detail=detail)
 
 
 def clean(doc: dict) -> dict:
@@ -99,6 +101,7 @@ async def create_contact(req: ContactCreate, user: dict = Depends(get_current_us
         "sentiment": None, "last_called_at": None, "created_at": now_utc().isoformat(),
     }
     await db.contacts.insert_one(dict(doc))
+    await audit(user["org_id"], user, "create", entity="contact", entity_id=doc["id"], after=doc)
     return clean(doc)
 
 
@@ -119,12 +122,16 @@ async def update_contact(contact_id: str, req: ContactUpdate, user: dict = Depen
     res = await db.contacts.update_one({"id": contact_id, "org_id": user["org_id"]}, {"$set": updates})
     if res.matched_count == 0:
         raise HTTPException(404, "Contact not found")
-    return await db.contacts.find_one({"id": contact_id}, {"_id": 0})
+    after = await db.contacts.find_one({"id": contact_id}, {"_id": 0})
+    await audit(user["org_id"], user, "update", entity="contact", entity_id=contact_id, after=updates)
+    return after
 
 
 @router.delete("/contacts/{contact_id}")
 async def delete_contact(contact_id: str, user: dict = Depends(get_current_user)):
+    before = await db.contacts.find_one({"id": contact_id, "org_id": user["org_id"]}, {"_id": 0})
     await db.contacts.delete_one({"id": contact_id, "org_id": user["org_id"]})
+    await audit(user["org_id"], user, "delete", entity="contact", entity_id=contact_id, before=before)
     return {"ok": True}
 
 
@@ -141,6 +148,7 @@ async def create_script(req: ScriptCreate, user: dict = Depends(get_current_user
         "content": req.content, "objective": req.objective, "created_at": now_utc().isoformat(),
     }
     await db.scripts.insert_one(dict(doc))
+    await audit(user["org_id"], user, "create", entity="script", entity_id=doc["id"], after={"name": req.name})
     return clean(doc)
 
 
@@ -182,6 +190,7 @@ async def create_campaign(req: CampaignCreate, user: dict = Depends(get_current_
         "status": "draft", "created_at": now_utc().isoformat(),
     }
     await db.campaigns.insert_one(dict(doc))
+    await audit(user["org_id"], user, "create", entity="campaign", entity_id=doc["id"], after={"name": req.name})
     return clean(doc)
 
 
@@ -211,8 +220,22 @@ async def list_voices(user: dict = Depends(get_current_user)):
 @router.post("/voices/preview")
 async def voice_preview(req: VoicePreviewRequest, user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
-    org_key = (org or {}).get("integrations", {}).get("elevenlabs_api_key", "")
-    return await generate_voice_preview(req.voice_id, req.text, org_key)
+    result = await generate_tts(org, req.voice_id, req.text)
+    # keep backward-compatible shape (mock flag) for the frontend
+    result["mock"] = result["provider"] != "elevenlabs"
+    return result
+
+
+@router.post("/settings/integrations/elevenlabs/test")
+async def test_elevenlabs(req: ElevenLabsTestRequest, user: dict = Depends(require_admin)):
+    """Validate an ElevenLabs API key. Uses the posted key, or the saved one if blank."""
+    key = req.api_key
+    if not key:
+        org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+        key = (org or {}).get("integrations", {}).get("elevenlabs_api_key", "")
+    result = validate_elevenlabs_key(key)
+    await audit(user["org_id"], user, "elevenlabs_key_test", detail=f"valid={result['valid']}", entity="integration")
+    return result
 
 
 # ---------------- Compliance helpers ----------------
@@ -250,28 +273,57 @@ async def start_test_call(req: TestCallStartRequest, user: dict = Depends(get_cu
         if contact and contact.get("opted_out"):
             raise HTTPException(403, "Contact has opted out / is on the Do-Not-Call list.")
 
-    # opening line
-    opening = "Hello, this is your AI assistant calling. Do you have a quick moment?"
+    # opening line — scripted (default) or KB-guided
+    scripted_opening = "Hello, this is your AI assistant calling. Do you have a quick moment?"
     for line in script_content.split("\n"):
         if line.strip() and "[" not in line:
-            opening = line.strip()
+            scripted_opening = line.strip()
             break
 
+    opening = scripted_opening
+    opening_meta = {"mode": "scripted", "sources": [], "fallback": False, "reason": "scripted_default"}
+    if (org or {}).get("opening_mode") == "kb":
+        kb_entries = await get_kb_entries(user["org_id"])
+        product_context = (script.get("objective") if script else "") or "Cold outreach call"
+        kb_res = await generate_kb_opening(
+            org, kb_entries, product_context,
+            creativity=(org or {}).get("opening_creativity", "medium"),
+            max_length=int((org or {}).get("opening_max_length", 220)),
+            session_id=f"open_{user['org_id']}",
+        )
+        if kb_res["opening"] and not kb_res["fallback"]:
+            opening = kb_res["opening"]
+            opening_meta = {"mode": "kb", "sources": kb_res["sources"], "fallback": False, "reason": kb_res["reason"]}
+        else:
+            opening_meta = {"mode": "scripted", "sources": kb_res["sources"], "fallback": True, "reason": kb_res["reason"]}
+
     voice = get_voice(voice_id) if voice_id else None
+
+    # TTS: deterministic provider selection (ElevenLabs when configured) — no silent fallback
+    tts = await generate_tts(org, voice_id, opening) if voice_id else {"provider": "browser", "audio_url": None, "reason": "no_voice", "error": None}
+
     call = {
         "id": new_id("call"), "org_id": user["org_id"], "campaign_id": req.campaign_id,
         "contact_id": req.contact_id, "voice_id": voice_id, "voice_name": voice["name"] if voice else None,
         "script_id": script_id, "script_content": script_content, "is_test": True,
         "status": "in_progress", "sentiment": None, "opted_out": False,
+        "opening_meta": opening_meta, "tts_provider": tts["provider"],
         "transcript": [{"role": "agent", "content": opening, "ts": now_utc().isoformat()}],
         "created_at": now_utc().isoformat(),
     }
     await db.calls.insert_one(dict(call))
-    return {"call_id": call["id"], "voice": voice, "opening": opening, "elevenlabs_enabled": bool((org or {}).get("integrations", {}).get("elevenlabs_api_key"))}
+    return {
+        "call_id": call["id"], "voice": voice, "opening": opening,
+        "tts_provider": tts["provider"], "tts_reason": tts.get("reason"),
+        "tts_error": tts.get("error"), "audio_url": tts.get("audio_url"),
+        "opening_meta": opening_meta,
+        "elevenlabs_enabled": select_tts_provider(org)["provider"] == "elevenlabs",
+    }
 
 
 @router.post("/calls/test/turn")
 async def test_call_turn(req: TestCallTurnRequest, user: dict = Depends(get_current_user)):
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
     call = await db.calls.find_one({"id": req.call_id, "org_id": user["org_id"]}, {"_id": 0})
     if not call:
         raise HTTPException(404, "Call not found")
@@ -280,7 +332,9 @@ async def test_call_turn(req: TestCallTurnRequest, user: dict = Depends(get_curr
     reply = await agent_reply(call["script_content"], history, req.message, session_id=req.call_id)
     history.append({"role": "agent", "content": reply, "ts": now_utc().isoformat()})
     await db.calls.update_one({"id": req.call_id}, {"$set": {"transcript": history}})
-    return {"reply": reply}
+    tts = await generate_tts(org, call.get("voice_id"), reply) if call.get("voice_id") else {"provider": "browser", "audio_url": None, "reason": "no_voice", "error": None}
+    return {"reply": reply, "tts_provider": tts["provider"], "tts_reason": tts.get("reason"),
+            "tts_error": tts.get("error"), "audio_url": tts.get("audio_url")}
 
 
 @router.post("/calls/test/{call_id}/end")

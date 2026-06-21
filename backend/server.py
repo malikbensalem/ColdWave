@@ -10,14 +10,37 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from database import db, create_indexes
-from auth import auth_router, seed_admin
+from auth import auth_router, seed_admin, get_current_user, require_admin
 from routes import router as app_router
 from models import now_utc, new_id
+from audit import audit_context_middleware, record_audit, build_audit_router
+from messaging import build_messaging_router, build_whatsapp_webhook_router, create_messaging_indexes
+from kb import build_kb_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+
+def _validate_env():
+    required = ["MONGO_URL", "DB_NAME", "JWT_SECRET"]
+    missing = [v for v in required if not os.environ.get(v)]
+    if missing:
+        raise RuntimeError(
+            f"Missing required environment variables: {', '.join(missing)}. "
+            f"Copy backend/.env.example to backend/.env and fill them in."
+        )
+    if not os.environ.get("EMERGENT_LLM_KEY"):
+        logger.warning("EMERGENT_LLM_KEY not set — AI features (scripts, test-call, opening KB) will fail.")
+    if not (os.environ.get("WHATSAPP_ACCESS_TOKEN") and os.environ.get("WHATSAPP_PHONE_NUMBER_ID")):
+        logger.warning("WhatsApp credentials not set — WhatsApp runs in MOCK mode (no real sends).")
+
+
+_validate_env()
+
 app = FastAPI(title="ColdWave AI Calling Platform")
+
+# Per-request audit context (source IP + correlation id) for the append-only audit log.
+app.middleware("http")(audit_context_middleware)
 
 
 @app.get("/api/")
@@ -25,8 +48,26 @@ async def root():
     return {"message": "ColdWave AI Calling API", "status": "ok"}
 
 
+@app.get("/api/health")
+async def health():
+    services = {"api": "ok"}
+    try:
+        await db.command("ping")
+        services["mongodb"] = "ok"
+    except Exception as e:
+        services["mongodb"] = f"error: {e}"
+    services["whatsapp"] = "live" if os.environ.get("WHATSAPP_ACCESS_TOKEN") else "mock"
+    services["elevenlabs"] = "configured" if os.environ.get("ELEVENLABS_API_KEY") else "per-workspace/mock"
+    services["llm"] = "configured" if os.environ.get("EMERGENT_LLM_KEY") else "missing"
+    return {"status": "ok", "services": services}
+
+
 app.include_router(auth_router)
 app.include_router(app_router)
+app.include_router(build_audit_router(get_current_user, require_admin))
+app.include_router(build_messaging_router(get_current_user, record_audit))
+app.include_router(build_whatsapp_webhook_router())
+app.include_router(build_kb_router(get_current_user, record_audit))
 
 app.add_middleware(
     CORSMiddleware,
@@ -91,11 +132,13 @@ async def seed_demo_data():
 @app.on_event("startup")
 async def startup():
     await create_indexes()
+    await create_messaging_indexes()
     await seed_admin()
     await seed_demo_data()
-    logger.info("ColdWave startup complete")
+    logger.info("ColdWave startup complete — services healthy")
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    pass
+    logger.info("ColdWave shutting down gracefully")
+    db.client.close() if hasattr(db, "client") else None

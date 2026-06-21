@@ -46,12 +46,21 @@ class IntegrationSettings(BaseModel):
     tcx_extension: str = ""
     elevenlabs_api_key: str = ""
     elevenlabs_enabled: bool = False
+    elevenlabs_model: str = "eleven_multilingual_v2"
+    elevenlabs_stability: float = 0.5
+    elevenlabs_similarity: float = 0.75
+    elevenlabs_style: float = 0.0
     o365_enabled: bool = False
     o365_tenant_id: str = ""
     o365_client_id: str = ""
     o365_client_secret: str = ""
     llm_provider: str = "anthropic"
     llm_model: str = "claude-sonnet-4-6"
+    whatsapp_enabled: bool = False
+    whatsapp_phone_number_id: str = ""
+    whatsapp_business_account_id: str = ""
+    whatsapp_access_token: str = ""
+    whatsapp_app_secret: str = ""
 
 
 class OrgUpdateRequest(BaseModel):
@@ -59,6 +68,9 @@ class OrgUpdateRequest(BaseModel):
     calling_hours_start: Optional[str] = None  # "08:00"
     calling_hours_end: Optional[str] = None    # "20:00"
     calling_days: Optional[List[str]] = None   # ["mon",...]
+    opening_mode: Optional[str] = None         # "scripted" | "kb"
+    opening_creativity: Optional[str] = None   # "low" | "medium" | "high"
+    opening_max_length: Optional[int] = None
 
 
 # ---------- CRM ----------
@@ -144,3 +156,7 @@ class DNCAddRequest(BaseModel):
 
 class ErasureRequest(BaseModel):
     contact_id: str
+
+
+class ElevenLabsTestRequest(BaseModel):
+    api_key: str = ""

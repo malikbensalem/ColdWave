@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import {
-  ChartLineUp, Users, Megaphone, PhoneCall, ShieldCheck, Gear, SignOut, Waveform,
+  ChartLineUp, Users, Megaphone, PhoneCall, ShieldCheck, Gear, SignOut, Waveform, WhatsappLogo,
 } from "@phosphor-icons/react";
 
 const NAV = [
@@ -9,6 +9,7 @@ const NAV = [
   { to: "/leads", label: "CRM / Leads", icon: Users, testid: "nav-leads" },
   { to: "/campaigns", label: "Campaigns", icon: Megaphone, testid: "nav-campaigns" },
   { to: "/test-calls", label: "Test Calls", icon: PhoneCall, testid: "nav-test-calls" },
+  { to: "/messaging", label: "WhatsApp", icon: WhatsappLogo, testid: "nav-messaging" },
   { to: "/compliance", label: "Compliance", icon: ShieldCheck, testid: "nav-compliance" },
   { to: "/settings", label: "Settings", icon: Gear, testid: "nav-settings" },
 ];

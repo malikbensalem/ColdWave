@@ -22,3 +22,4 @@ async def create_indexes():
     await db.calls.create_index([("org_id", 1), ("created_at", -1)])
     await db.dnc_list.create_index([("org_id", 1), ("phone", 1)], unique=True)
     await db.audit_logs.create_index([("org_id", 1), ("created_at", -1)])
+    await db.kb_entries.create_index([("org_id", 1), ("created_at", -1)])

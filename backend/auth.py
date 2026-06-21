@@ -121,6 +121,9 @@ async def _create_org(name: str) -> dict:
         "calling_hours_start": "08:00",
         "calling_hours_end": "20:00",
         "calling_days": ["mon", "tue", "wed", "thu", "fri"],
+        "opening_mode": "scripted",
+        "opening_creativity": "medium",
+        "opening_max_length": 220,
         "integrations": {
             "tcx_enabled": False, "tcx_url": "", "tcx_username": "", "tcx_password": "",
             "tcx_extension": "", "elevenlabs_api_key": "", "elevenlabs_enabled": False,

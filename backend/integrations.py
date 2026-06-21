@@ -128,3 +128,129 @@ async def analyze_transcript(transcript: str, session_id: str) -> dict:
             "next_action": "Review transcript manually.",
             "score": 50,
         }
+
+
+# ---------------- ElevenLabs: deterministic TTS selection + validation ----------------
+def select_tts_provider(org: dict) -> dict:
+    """Deterministic provider selection. Returns {provider, reason, key_present}.
+    Rules: if org/env ElevenLabs key present AND elevenlabs_enabled -> 'elevenlabs';
+    else 'browser' with explicit reason. No silent fallback."""
+    integ = (org or {}).get("integrations", {})
+    key = integ.get("elevenlabs_api_key") or os.environ.get("ELEVENLABS_API_KEY", "")
+    enabled = integ.get("elevenlabs_enabled", False)
+    if key and enabled:
+        return {"provider": "elevenlabs", "reason": "valid_config", "key_present": True}
+    if key and not enabled:
+        return {"provider": "browser", "reason": "elevenlabs_key_present_but_disabled", "key_present": True}
+    return {"provider": "browser", "reason": "no_elevenlabs_key", "key_present": False}
+
+
+def validate_elevenlabs_key(api_key: str) -> dict:
+    """Ping ElevenLabs to confirm the key is valid. Returns {valid, message, voice_count}."""
+    if not api_key:
+        return {"valid": False, "message": "No API key provided."}
+    try:
+        from elevenlabs import ElevenLabs
+        client = ElevenLabs(api_key=api_key)
+        voices = client.voices.get_all()
+        count = len(getattr(voices, "voices", []) or [])
+        return {"valid": True, "message": f"Key is valid. {count} voices available on this account.", "voice_count": count}
+    except Exception as e:
+        msg = str(e)
+        if "401" in msg or "unauthorized" in msg.lower():
+            return {"valid": False, "message": "Invalid API key (unauthorized)."}
+        return {"valid": False, "message": f"Validation failed: {msg[:160]}"}
+
+
+async def generate_tts(org: dict, voice_id: str, text: str) -> dict:
+    """Generate speech using the selected provider. Logs selection; never falls back silently
+    when a valid ElevenLabs key exists. Returns {provider, voice, audio_url, reason, error}."""
+    selection = select_tts_provider(org)
+    voice = get_voice(voice_id)
+    integ = (org or {}).get("integrations", {})
+    key = integ.get("elevenlabs_api_key") or os.environ.get("ELEVENLABS_API_KEY", "")
+
+    if selection["provider"] != "elevenlabs":
+        logger.info(f"TTS selection -> browser (reason={selection['reason']}) voice={voice_id}")
+        return {"provider": "browser", "voice": voice, "audio_url": None,
+                "reason": selection["reason"], "error": None}
+
+    if not voice:
+        return {"provider": "browser", "voice": None, "audio_url": None,
+                "reason": "voice_not_found", "error": "voice_not_found"}
+
+    try:
+        from elevenlabs import ElevenLabs, VoiceSettings
+        client = ElevenLabs(api_key=key)
+        settings = VoiceSettings(
+            stability=float(integ.get("elevenlabs_stability", 0.5)),
+            similarity_boost=float(integ.get("elevenlabs_similarity", 0.75)),
+            style=float(integ.get("elevenlabs_style", 0.0)),
+            use_speaker_boost=True,
+        )
+        model_id = integ.get("elevenlabs_model", "eleven_multilingual_v2")
+        audio = client.text_to_speech.convert(
+            text=text[:600], voice_id=voice["elevenlabs_voice_id"],
+            model_id=model_id, voice_settings=settings)
+        data = b""
+        for chunk in audio:
+            data += chunk
+        b64 = base64.b64encode(data).decode()
+        logger.info(f"TTS selection -> elevenlabs OK voice={voice['name']} model={model_id} bytes={len(data)}")
+        return {"provider": "elevenlabs", "voice": voice,
+                "audio_url": f"data:audio/mpeg;base64,{b64}", "reason": "valid_config", "error": None}
+    except Exception as e:
+        # IMPORTANT: do NOT silently fall back when a key was configured. Surface the error.
+        logger.error(f"TTS elevenlabs ERROR (configured key present) voice={voice_id}: {e}")
+        return {"provider": "elevenlabs_error", "voice": voice, "audio_url": None,
+                "reason": "elevenlabs_call_failed", "error": str(e)[:200]}
+
+
+# ---------------- Knowledge-base guided opening line + guardrails ----------------
+PROFANITY = {"damn", "hell", "shit", "fuck", "bastard", "crap", "bloody", "arse"}
+
+
+def passes_guardrails(text: str) -> tuple:
+    low = text.lower()
+    for w in PROFANITY:
+        if w in low.split() or f" {w} " in f" {low} ":
+            return False, f"profanity:{w}"
+    return True, "ok"
+
+
+async def generate_kb_opening(org: dict, kb_entries: list, product_context: str,
+                              creativity: str, max_length: int, session_id: str) -> dict:
+    """KB-guided opening with guardrails + compliance + fallback signalling.
+    Returns {opening, sources, fallback, reason}."""
+    if not kb_entries:
+        return {"opening": None, "sources": [], "fallback": True, "reason": "kb_empty"}
+
+    temp_map = {"low": 0.2, "medium": 0.6, "high": 0.9}
+    kb_text = "\n\n".join([f"[{e['title']}] {e['content'][:600]}" for e in kb_entries[:5]])
+    sources = [e["title"] for e in kb_entries[:5]]
+    creativity_word = {"low": "conservative and close to the facts",
+                       "medium": "natural and lightly varied",
+                       "high": "creative and engaging"}.get(creativity, "natural")
+    system = (
+        "You are a UK B2B cold-call opener writer. Using ONLY the knowledge base provided, craft ONE "
+        "natural spoken opening line for a cold call. Constraints: on-brand, professional, "
+        "compliance-safe (no misleading claims, no pressure), no profanity, and ALWAYS sound human. "
+        f"Style: {creativity_word}. Keep it under {max_length} characters. Output ONLY the opening line."
+    )
+    prompt = f"Knowledge base:\n{kb_text}\n\nProduct/context: {product_context}\n\nWrite the opening line:"
+    try:
+        chat = _chat(session_id, system)
+        from emergentintegrations.llm.chat import UserMessage
+        resp = await chat.send_message(UserMessage(text=prompt))
+        opening = (resp if isinstance(resp, str) else str(resp)).strip().strip('"')
+        if len(opening) > max_length:
+            opening = opening[:max_length].rsplit(" ", 1)[0] + "…"
+        ok, reason = passes_guardrails(opening)
+        if not ok:
+            logger.warning(f"KB opening failed guardrails ({reason}); falling back to scripted.")
+            return {"opening": None, "sources": sources, "fallback": True, "reason": reason}
+        logger.info(f"KB opening generated (sources={sources}) len={len(opening)}")
+        return {"opening": opening, "sources": sources, "fallback": False, "reason": "kb_generated"}
+    except Exception as e:
+        logger.error(f"KB opening generation failed: {e}")
+        return {"opening": None, "sources": sources, "fallback": True, "reason": f"llm_error:{str(e)[:80]}"}

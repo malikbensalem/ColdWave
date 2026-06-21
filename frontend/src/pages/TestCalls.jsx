@@ -19,6 +19,7 @@ export default function TestCalls() {
   const [busy, setBusy] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const [voiceGender, setVoiceGender] = useState("female");
+  const [callMeta, setCallMeta] = useState(null);
   const endRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -30,7 +31,15 @@ export default function TestCalls() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  const speak = (text, gender) => { speakMock(text, gender); };
+  const speak = (audioUrl, text, gender) => {
+    stopSpeak();
+    if (audioUrl) {
+      const a = new Audio(audioUrl);
+      a.play().catch(() => speakMock(text, gender));
+    } else {
+      speakMock(text, gender);
+    }
+  };
 
   const start = async () => {
     if (!setup.voice_id) { toast.error("Pick a voice first"); return; }
@@ -40,9 +49,12 @@ export default function TestCalls() {
       const v = voices.find((x) => x.id === setup.voice_id);
       setVoiceGender(v?.gender || "female");
       setCall(data);
+      setCallMeta({ tts_provider: data.tts_provider, tts_error: data.tts_error, opening_meta: data.opening_meta });
       setMessages([{ role: "agent", content: data.opening }]);
       setAnalysis(null);
-      speak(data.opening, v?.gender);
+      if (data.tts_error) toast.error(`ElevenLabs error: ${data.tts_error}`);
+      else if (data.tts_provider === "elevenlabs") toast.success("Using ElevenLabs voice");
+      speak(data.audio_url, data.opening, v?.gender);
     } catch (err) { toast.error(apiErr(err)); }
     finally { setBusy(false); }
   };
@@ -56,7 +68,7 @@ export default function TestCalls() {
     try {
       const { data } = await api.post("/calls/test/turn", { call_id: call.call_id, message: msg });
       setMessages((m) => [...m, { role: "agent", content: data.reply }]);
-      speak(data.reply, voiceGender);
+      speak(data.audio_url, data.reply, voiceGender);
     } catch (err) { toast.error(apiErr(err)); }
     finally { setBusy(false); }
   };
@@ -125,6 +137,13 @@ export default function TestCalls() {
           </div>
 
           <div className="space-y-3">
+            {callMeta && (
+              <div className="bg-card border border-border rounded-sm p-4 text-xs space-y-1.5" data-testid="call-diagnostics">
+                <div className="flex justify-between"><span className="text-muted-foreground">Voice engine</span><span className={`font-semibold ${callMeta.tts_provider === "elevenlabs" ? "text-success" : callMeta.tts_provider === "elevenlabs_error" ? "text-destructive" : ""}`}>{callMeta.tts_provider === "elevenlabs" ? "ElevenLabs" : callMeta.tts_provider === "elevenlabs_error" ? "ElevenLabs (error)" : "Browser (mock)"}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Opening mode</span><span className="font-semibold capitalize">{callMeta.opening_meta?.mode}{callMeta.opening_meta?.fallback ? " (fallback)" : ""}</span></div>
+                {callMeta.opening_meta?.sources?.length > 0 && <div className="flex justify-between"><span className="text-muted-foreground">KB sources</span><span className="font-medium text-right">{callMeta.opening_meta.sources.join(", ")}</span></div>}
+              </div>
+            )}
             <div className="bg-card border border-border rounded-sm p-4">
               <div className="flex items-center gap-1.5 text-sm font-semibold mb-3"><ChartBar size={16} weight="bold" /> Call Analysis</div>
               {analysis ? (

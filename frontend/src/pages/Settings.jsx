@@ -5,7 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import {
-  Plug, Buildings, UsersThree, BookOpen, FloppyDisk, Plus, Trash, Phone, MicrophoneStage, Brain, MicrosoftOutlookLogo, CheckCircle, Key,
+  Plug, Buildings, UsersThree, BookOpen, FloppyDisk, Plus, Trash, Phone, MicrophoneStage, Brain, MicrosoftOutlookLogo, CheckCircle, Key, WhatsappLogo, Sparkle, ListMagnifyingGlass, UploadSimple, BookBookmark,
 } from "@phosphor-icons/react";
 
 export default function Settings() {
@@ -21,12 +21,16 @@ export default function Settings() {
         <TabsList>
           <TabsTrigger value="integrations" data-testid="tab-integrations"><Plug size={16} className="mr-1.5" />Integrations</TabsTrigger>
           <TabsTrigger value="org" data-testid="tab-org"><Buildings size={16} className="mr-1.5" />Organisation</TabsTrigger>
+          <TabsTrigger value="opening" data-testid="tab-opening"><Sparkle size={16} className="mr-1.5" />Opening &amp; KB</TabsTrigger>
           <TabsTrigger value="users" data-testid="tab-users"><UsersThree size={16} className="mr-1.5" />Users</TabsTrigger>
+          <TabsTrigger value="audit" data-testid="tab-audit"><ListMagnifyingGlass size={16} className="mr-1.5" />Audit</TabsTrigger>
           <TabsTrigger value="playbook" data-testid="tab-playbook"><BookOpen size={16} className="mr-1.5" />Playbook</TabsTrigger>
         </TabsList>
         <TabsContent value="integrations" className="mt-4"><IntegrationsTab /></TabsContent>
         <TabsContent value="org" className="mt-4"><OrgTab /></TabsContent>
+        <TabsContent value="opening" className="mt-4"><OpeningTab /></TabsContent>
         <TabsContent value="users" className="mt-4"><UsersTab me={user} /></TabsContent>
+        <TabsContent value="audit" className="mt-4"><AuditTab /></TabsContent>
         <TabsContent value="playbook" className="mt-4"><PlaybookTab /></TabsContent>
       </Tabs>
     </div>
@@ -35,11 +39,22 @@ export default function Settings() {
 
 function IntegrationsTab() {
   const [data, setData] = useState(null);
+  const [elevenStatus, setElevenStatus] = useState(null);
+  const [elevenBusy, setElevenBusy] = useState(false);
   const load = useCallback(async () => { try { const r = await api.get("/settings/integrations"); setData(r.data); } catch (e) { toast.error(apiErr(e)); } }, []);
   useEffect(() => { load(); }, [load]);
   const save = async () => { try { await api.put("/settings/integrations", data); toast.success("Integrations saved"); } catch (e) { toast.error(apiErr(e)); } };
   const testTcx = async () => { try { const r = await api.post("/settings/integrations/tcx/test"); toast.success(r.data.message); } catch (e) { toast.error(apiErr(e)); } };
-  const set = (k) => (e) => setData({ ...data, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
+  const validateEleven = async () => {
+    setElevenBusy(true); setElevenStatus(null);
+    try {
+      const r = await api.post("/settings/integrations/elevenlabs/test", { api_key: data.elevenlabs_api_key || "" });
+      setElevenStatus(r.data);
+      r.data.valid ? toast.success(r.data.message) : toast.error(r.data.message);
+    } catch (e) { toast.error(apiErr(e)); }
+    finally { setElevenBusy(false); }
+  };
+  const set = (k) => (e) => setData({ ...data, [k]: e.target.type === "checkbox" ? e.target.checked : (e.target.type === "number" ? parseFloat(e.target.value) : e.target.value) });
   if (!data) return <div className="text-sm text-muted-foreground">Loading…</div>;
 
   return (
@@ -58,10 +73,33 @@ function IntegrationsTab() {
         <p className="text-xs text-muted-foreground">Live calls route through your 3CX Call Control API. Currently mock until a reachable PBX is connected.</p>
       </Section>
 
-      <Section icon={MicrophoneStage} title="ElevenLabs Voice" badge={data.elevenlabs_api_key ? "Active" : "Mock mode"}>
+      <Section icon={MicrophoneStage} title="ElevenLabs Voice" badge={elevenStatus ? (elevenStatus.valid ? "Valid ✓" : "Invalid ✗") : (data.elevenlabs_api_key ? "Key set" : "Mock mode")}>
         <F label="API Key" testid="eleven-key" type="password" value={data.elevenlabs_api_key} onChange={set("elevenlabs_api_key")} placeholder="sk-..." />
-        <Toggle testid="eleven-enabled" label="Use ElevenLabs for voice synthesis" checked={data.elevenlabs_enabled} onChange={set("elevenlabs_enabled")} />
-        <p className="text-xs text-muted-foreground">Get a key at elevenlabs.io → Settings → API Keys. Without it, previews use the browser voice.</p>
+        <div className="flex items-center gap-3">
+          <Toggle testid="eleven-enabled" label="Use ElevenLabs for voice synthesis" checked={data.elevenlabs_enabled} onChange={set("elevenlabs_enabled")} />
+          <button data-testid="validate-eleven-button" onClick={validateEleven} disabled={elevenBusy} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">{elevenBusy ? "Checking…" : "Validate key"}</button>
+        </div>
+        {elevenStatus && (
+          <div data-testid="eleven-validate-result" className={`text-xs rounded-sm p-2 border ${elevenStatus.valid ? "border-success/40 bg-success/10 text-success" : "border-destructive/40 bg-destructive/10 text-destructive"}`}>{elevenStatus.message}</div>
+        )}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <F label="Model" testid="eleven-model" value={data.elevenlabs_model || "eleven_multilingual_v2"} onChange={set("elevenlabs_model")} />
+          <F label="Stability" testid="eleven-stability" type="number" step="0.05" min="0" max="1" value={data.elevenlabs_stability ?? 0.5} onChange={set("elevenlabs_stability")} />
+          <F label="Similarity" testid="eleven-similarity" type="number" step="0.05" min="0" max="1" value={data.elevenlabs_similarity ?? 0.75} onChange={set("elevenlabs_similarity")} />
+          <F label="Style" testid="eleven-style" type="number" step="0.05" min="0" max="1" value={data.elevenlabs_style ?? 0.0} onChange={set("elevenlabs_style")} />
+        </div>
+        <p className="text-xs text-muted-foreground">Validate confirms the key works before saving. When enabled with a valid key, test calls use ElevenLabs audio (no silent fallback).</p>
+      </Section>
+
+      <Section icon={WhatsappLogo} title="WhatsApp Business Cloud API" badge={data.whatsapp_access_token ? "Configured" : "Mock mode"}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <F label="Phone Number ID" testid="wa-phone-id" value={data.whatsapp_phone_number_id || ""} onChange={set("whatsapp_phone_number_id")} />
+          <F label="Business Account ID" testid="wa-business-id" value={data.whatsapp_business_account_id || ""} onChange={set("whatsapp_business_account_id")} />
+          <F label="Access Token" testid="wa-token" type="password" value={data.whatsapp_access_token || ""} onChange={set("whatsapp_access_token")} />
+          <F label="App Secret (webhook signing)" testid="wa-secret" type="password" value={data.whatsapp_app_secret || ""} onChange={set("whatsapp_app_secret")} />
+        </div>
+        <Toggle testid="wa-enabled" label="Enable WhatsApp live sending" checked={data.whatsapp_enabled} onChange={set("whatsapp_enabled")} />
+        <p className="text-xs text-muted-foreground">From Meta → WhatsApp → API Setup. Webhook URL: <code className="text-foreground">{`{backend}/api/webhooks/whatsapp`}</code>. Without credentials, WhatsApp runs in safe mock mode.</p>
       </Section>
 
       <Section icon={Brain} title="AI Language Model" badge="Emergent Key">
@@ -188,6 +226,109 @@ function PlaybookTab() {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function OpeningTab() {
+  const [org, setOrg] = useState(null);
+  const [kb, setKb] = useState([]);
+  const [entry, setEntry] = useState({ title: "", content: "" });
+  const load = useCallback(async () => {
+    const [o, k] = await Promise.all([api.get("/settings/org"), api.get("/kb")]);
+    setOrg(o.data); setKb(k.data);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const saveOrg = async (patch) => { try { const r = await api.put("/settings/org", patch); setOrg(r.data); toast.success("Saved"); } catch (e) { toast.error(apiErr(e)); } };
+  const addEntry = async () => { if (!entry.title || !entry.content) return; try { await api.post("/kb", entry); setEntry({ title: "", content: "" }); load(); toast.success("KB entry added"); } catch (e) { toast.error(apiErr(e)); } };
+  const upload = async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const fd = new FormData(); fd.append("file", file);
+    try { await api.post("/kb/upload", fd, { headers: { "Content-Type": "multipart/form-data" } }); load(); toast.success("Document added to KB"); } catch (err) { toast.error(apiErr(err)); }
+    e.target.value = "";
+  };
+  const remove = async (id) => { await api.delete(`/kb/${id}`); load(); };
+  if (!org) return <div className="text-sm text-muted-foreground">Loading…</div>;
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <Section icon={Sparkle} title="Opening Line Mode">
+        <div className="flex gap-2">
+          {["scripted", "kb"].map((m) => (
+            <button key={m} data-testid={`opening-mode-${m}`} onClick={() => saveOrg({ opening_mode: m })}
+              className={`flex-1 h-10 rounded-sm text-sm font-semibold capitalize border ${org.opening_mode === m ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:bg-accent"}`}>
+              {m === "kb" ? "Knowledge-base" : "Scripted"}
+            </button>
+          ))}
+        </div>
+        <Sel label="Creativity / variation" testid="opening-creativity" value={org.opening_creativity || "medium"} onChange={(e) => saveOrg({ opening_creativity: e.target.value })}
+          options={[{ value: "low", label: "Low" }, { value: "medium", label: "Medium" }, { value: "high", label: "High" }]} />
+        <F label="Max opening length (chars)" testid="opening-maxlen" type="number" value={org.opening_max_length ?? 220} onChange={(e) => saveOrg({ opening_max_length: parseInt(e.target.value) || 220 })} />
+        <p className="text-xs text-muted-foreground">In KB mode, openings are generated from your knowledge base with brand/compliance guardrails. If retrieval or generation fails, it automatically falls back to the scripted opening.</p>
+      </Section>
+
+      <Section icon={BookBookmark} title="Knowledge Base">
+        <div className="flex items-center gap-2">
+          <label data-testid="kb-upload-label" className="inline-flex items-center gap-1.5 h-9 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent cursor-pointer">
+            <UploadSimple size={15} weight="bold" /> Upload .pdf / .txt
+            <input data-testid="kb-upload" type="file" accept=".pdf,.txt,.md" onChange={upload} className="hidden" />
+          </label>
+          <span className="text-xs text-muted-foreground">{kb.length} entries</span>
+        </div>
+        <div className="space-y-2">
+          <F label="Title" testid="kb-title" value={entry.title} onChange={(e) => setEntry({ ...entry, title: e.target.value })} />
+          <textarea data-testid="kb-content" value={entry.content} onChange={(e) => setEntry({ ...entry, content: e.target.value })} rows={3} placeholder="Paste FAQ / product facts…"
+            className="w-full rounded-sm border border-input bg-card p-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          <button data-testid="kb-add" onClick={addEntry} className="inline-flex items-center gap-1.5 h-9 px-3 bg-foreground text-background rounded-sm text-sm font-medium"><Plus size={15} weight="bold" /> Add entry</button>
+        </div>
+        <div className="max-h-48 overflow-y-auto space-y-1.5">
+          {kb.map((k) => (
+            <div key={k.id} className="flex items-center justify-between border border-border rounded-sm px-3 py-2">
+              <div className="min-w-0"><div className="text-sm font-medium truncate">{k.title}</div><div className="text-xs text-muted-foreground capitalize">{k.source}</div></div>
+              <button data-testid={`kb-delete-${k.id}`} onClick={() => remove(k.id)} className="text-muted-foreground hover:text-destructive"><Trash size={14} /></button>
+            </div>
+          ))}
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+function AuditTab() {
+  const [logs, setLogs] = useState([]);
+  const [filters, setFilters] = useState({ actor: "", entity: "", action: "", date_from: "", date_to: "" });
+  const load = useCallback(async () => {
+    const params = Object.fromEntries(Object.entries(filters).filter(([, v]) => v));
+    try { const r = await api.get("/audit", { params }); setLogs(r.data); } catch (e) { toast.error(apiErr(e)); }
+  }, [filters]);
+  useEffect(() => { load(); }, [load]);
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2 flex-wrap">
+        <input data-testid="audit-actor" value={filters.actor} onChange={(e) => setFilters({ ...filters, actor: e.target.value })} placeholder="Actor email" className="h-9 px-3 rounded-sm border border-input bg-card text-sm" />
+        <input data-testid="audit-entity" value={filters.entity} onChange={(e) => setFilters({ ...filters, entity: e.target.value })} placeholder="Entity (contact, message…)" className="h-9 px-3 rounded-sm border border-input bg-card text-sm" />
+        <input data-testid="audit-from" type="date" value={filters.date_from} onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} className="h-9 px-3 rounded-sm border border-input bg-card text-sm" />
+        <input data-testid="audit-to" type="date" value={filters.date_to} onChange={(e) => setFilters({ ...filters, date_to: e.target.value })} className="h-9 px-3 rounded-sm border border-input bg-card text-sm" />
+      </div>
+      <div className="bg-card border border-border rounded-sm overflow-hidden">
+        <table className="w-full text-sm">
+          <thead><tr className="text-left text-xs uppercase tracking-wide text-muted-foreground border-b border-border bg-secondary/50">
+            <th className="py-2.5 px-3 font-semibold">Time (UTC)</th><th className="py-2.5 px-3 font-semibold">Actor</th><th className="py-2.5 px-3 font-semibold">Action</th><th className="py-2.5 px-3 font-semibold">Entity</th><th className="py-2.5 px-3 font-semibold">IP</th><th className="py-2.5 px-3 font-semibold">Correlation</th></tr></thead>
+          <tbody>
+            {logs.map((l) => (
+              <tr key={l.id} data-testid={`audit-row-${l.id}`} className="border-b border-border/60 hover:bg-muted/50">
+                <td className="py-2 px-3 text-xs tnum">{(l.created_at || "").slice(0, 19).replace("T", " ")}</td>
+                <td className="py-2 px-3 text-xs">{l.actor}</td>
+                <td className="py-2 px-3"><span className="text-xs px-1.5 py-0.5 bg-accent rounded-sm font-medium">{l.action}</span></td>
+                <td className="py-2 px-3 text-xs">{l.entity}{l.entity_id ? `:${l.entity_id.slice(0, 10)}` : ""}</td>
+                <td className="py-2 px-3 text-xs tnum">{l.ip}</td>
+                <td className="py-2 px-3 text-xs tnum text-muted-foreground">{(l.correlation_id || "").slice(0, 12)}</td>
+              </tr>
+            ))}
+            {logs.length === 0 && <tr><td colSpan={6} className="py-8 text-center text-muted-foreground text-sm">No audit entries match.</td></tr>}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
