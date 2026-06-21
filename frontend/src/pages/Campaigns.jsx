@@ -93,8 +93,9 @@ function CampaignsTab() {
 function ScriptsTab() {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", content: "", objective: "" });
-  const [gen, setGen] = useState({ product: "", audience: "", objective: "", tone: "professional and friendly" });
+  const [scriptType, setScriptType] = useState("line_by_line");
+  const [form, setForm] = useState({ name: "", content: "", objective: "", personality: "" });
+  const [gen, setGen] = useState({ product: "", audience: "", objective: "", tone: "professional and friendly", personality: "" });
   const [genBusy, setGenBusy] = useState(false);
 
   const load = useCallback(async () => { const { data } = await api.get("/scripts"); setItems(data); }, []);
@@ -103,12 +104,27 @@ function ScriptsTab() {
   const generate = async () => {
     if (!gen.product) { toast.error("Describe your product first"); return; }
     setGenBusy(true);
-    try { const { data } = await api.post("/scripts/generate", gen); setForm({ ...form, content: data.content, objective: gen.objective }); toast.success("AI script generated"); }
+    try {
+      const { data } = await api.post("/scripts/generate", { ...gen, script_type: scriptType });
+      if (scriptType === "personality") setForm({ ...form, personality: data.content, objective: gen.objective });
+      else setForm({ ...form, content: data.content, objective: gen.objective });
+      toast.success(scriptType === "personality" ? "AI persona generated" : "AI script generated");
+    }
     catch (err) { toast.error(apiErr(err)); }
     finally { setGenBusy(false); }
   };
-  const save = async (e) => { e.preventDefault(); try { await api.post("/scripts", form); toast.success("Script saved"); setOpen(false); setForm({ name: "", content: "", objective: "" }); load(); } catch (err) { toast.error(apiErr(err)); } };
+  const save = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post("/scripts", { ...form, script_type: scriptType });
+      toast.success("Saved"); setOpen(false);
+      setForm({ name: "", content: "", objective: "", personality: "" });
+      load();
+    } catch (err) { toast.error(apiErr(err)); }
+  };
   const remove = async (id) => { await api.delete(`/scripts/${id}`); load(); };
+
+  const isPersona = scriptType === "personality";
 
   return (
     <div className="space-y-4">
@@ -117,21 +133,44 @@ function ScriptsTab() {
           <DialogTrigger asChild><button data-testid="create-script-button" className="inline-flex items-center gap-2 h-10 px-4 bg-primary text-primary-foreground rounded-sm text-sm font-medium hover:opacity-90"><Plus size={16} weight="bold" /> New Script</button></DialogTrigger>
           <DialogContent className="max-w-2xl">
             <DialogHeader><DialogTitle className="font-display">New Script</DialogTitle></DialogHeader>
+
+            <div className="grid grid-cols-2 gap-2 mb-1">
+              <button type="button" data-testid="script-type-line" onClick={() => setScriptType("line_by_line")}
+                className={`text-left p-2.5 rounded-sm border text-sm ${!isPersona ? "border-primary bg-primary/5" : "border-border hover:bg-accent"}`}>
+                <div className="font-semibold">Line-by-line script</div>
+                <div className="text-xs text-muted-foreground">Exact lines + responses. Still answers off-script questions from your company overview.</div>
+              </button>
+              <button type="button" data-testid="script-type-personality" onClick={() => setScriptType("personality")}
+                className={`text-left p-2.5 rounded-sm border text-sm ${isPersona ? "border-primary bg-primary/5" : "border-border hover:bg-accent"}`}>
+                <div className="font-semibold">Personality-driven</div>
+                <div className="text-xs text-muted-foreground">Give the agent a persona; it generates a unique conversation.</div>
+              </button>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2 bg-accent p-3 rounded-sm">
-                <div className="flex items-center gap-1.5 text-sm font-semibold"><Sparkle size={16} weight="fill" className="text-primary" /> AI Generator (Claude)</div>
+                <div className="flex items-center gap-1.5 text-sm font-semibold"><Sparkle size={16} weight="fill" className="text-primary" /> AI Generator</div>
                 <Field label="Product / service" testid="gen-product" value={gen.product} onChange={(e) => setGen({ ...gen, product: e.target.value })} />
                 <Field label="Target audience" testid="gen-audience" value={gen.audience} onChange={(e) => setGen({ ...gen, audience: e.target.value })} />
                 <Field label="Call objective" testid="gen-objective" value={gen.objective} onChange={(e) => setGen({ ...gen, objective: e.target.value })} />
-                <button data-testid="generate-script-button" onClick={generate} disabled={genBusy} className="w-full h-9 bg-primary text-primary-foreground rounded-sm text-sm font-medium disabled:opacity-60">{genBusy ? "Generating…" : "Generate Script"}</button>
+                <Field label={isPersona ? "Personality / tone (e.g. warm, witty, consultative)" : "Tone"} testid="gen-personality" value={isPersona ? gen.personality : gen.tone} onChange={(e) => setGen({ ...gen, [isPersona ? "personality" : "tone"]: e.target.value })} />
+                <button data-testid="generate-script-button" onClick={generate} disabled={genBusy} className="w-full h-9 bg-primary text-primary-foreground rounded-sm text-sm font-medium disabled:opacity-60">{genBusy ? "Generating…" : (isPersona ? "Generate Persona" : "Generate Script")}</button>
               </div>
               <form onSubmit={save} className="space-y-2">
                 <Field label="Script name" testid="script-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-                <div>
-                  <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Content</label>
-                  <textarea data-testid="script-content" value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} rows={10}
-                    className="mt-1 w-full rounded-sm border border-input bg-card p-2.5 text-xs font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" required />
-                </div>
+                {isPersona ? (
+                  <div>
+                    <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Persona &amp; behaviour</label>
+                    <textarea data-testid="script-personality" value={form.personality} onChange={(e) => setForm({ ...form, personality: e.target.value })} rows={10}
+                      className="mt-1 w-full rounded-sm border border-input bg-card p-2.5 text-xs font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" required />
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Script (line by line)</label>
+                    <textarea data-testid="script-content" value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} rows={10}
+                      className="mt-1 w-full rounded-sm border border-input bg-card p-2.5 text-xs font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" required />
+                  </div>
+                )}
                 <button data-testid="save-script-button" type="submit" className="w-full h-9 bg-foreground text-background rounded-sm text-sm font-medium">Save Script</button>
               </form>
             </div>
@@ -142,10 +181,13 @@ function ScriptsTab() {
         {items.map((s) => (
           <div key={s.id} data-testid={`script-card-${s.id}`} className="bg-card border border-border rounded-sm p-4">
             <div className="flex justify-between items-start">
-              <h3 className="font-display font-semibold">{s.name}</h3>
+              <div>
+                <h3 className="font-display font-semibold">{s.name}</h3>
+                <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 bg-accent rounded-sm font-semibold">{s.script_type === "personality" ? "Personality" : "Line-by-line"}</span>
+              </div>
               <button onClick={() => remove(s.id)} className="text-muted-foreground hover:text-destructive"><Trash size={15} /></button>
             </div>
-            <pre className="mt-2 text-[11px] font-mono text-muted-foreground whitespace-pre-wrap line-clamp-6 max-h-32 overflow-hidden">{s.content}</pre>
+            <pre className="mt-2 text-[11px] font-mono text-muted-foreground whitespace-pre-wrap line-clamp-6 max-h-32 overflow-hidden">{s.script_type === "personality" ? s.personality : s.content}</pre>
           </div>
         ))}
         {items.length === 0 && <Empty text="No scripts yet — generate one with AI." />}

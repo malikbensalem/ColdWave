@@ -56,6 +56,9 @@ class IntegrationSettings(BaseModel):
     o365_client_secret: str = ""
     llm_provider: str = "anthropic"
     llm_model: str = "claude-sonnet-4-6"
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    gemini_api_key: str = ""
     whatsapp_enabled: bool = False
     whatsapp_phone_number_id: str = ""
     whatsapp_business_account_id: str = ""
@@ -98,12 +101,16 @@ class ScriptCreate(BaseModel):
     name: str
     content: str = ""
     objective: str = ""
+    script_type: str = "line_by_line"  # "line_by_line" | "personality"
+    personality: str = ""
 
 
 class ScriptUpdate(BaseModel):
     name: Optional[str] = None
     content: Optional[str] = None
     objective: Optional[str] = None
+    script_type: Optional[str] = None
+    personality: Optional[str] = None
 
 
 class GenerateScriptRequest(BaseModel):
@@ -111,6 +118,8 @@ class GenerateScriptRequest(BaseModel):
     audience: str
     objective: str
     tone: str = "professional and friendly"
+    script_type: str = "line_by_line"
+    personality: str = ""
 
 
 # ---------- Campaigns ----------
@@ -160,3 +169,13 @@ class ErasureRequest(BaseModel):
 
 class ElevenLabsTestRequest(BaseModel):
     api_key: str = ""
+
+
+class LLMTestRequest(BaseModel):
+    provider: str
+    api_key: str = ""
+    model: str = ""
+
+
+class KBToggleRequest(BaseModel):
+    active: bool

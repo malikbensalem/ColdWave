@@ -18,8 +18,11 @@ class KBEntryCreate(BaseModel):
     content: str
 
 
-async def get_kb_entries(org_id: str):
-    return await db.kb_entries.find({"org_id": org_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+async def get_kb_entries(org_id: str, active_only: bool = False):
+    q = {"org_id": org_id}
+    if active_only:
+        q["active"] = True
+    return await db.kb_entries.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
 
 
 def build_kb_router(get_current_user, record_audit):
@@ -32,12 +35,24 @@ def build_kb_router(get_current_user, record_audit):
     @router.post("")
     async def create_kb(req: KBEntryCreate, user: dict = Depends(get_current_user)):
         doc = {"id": f"kb_{uuid.uuid4().hex[:16]}", "org_id": user["org_id"], "title": req.title,
-               "content": req.content, "source": "manual", "created_at": now_iso()}
+               "content": req.content, "source": "manual", "active": True, "created_at": now_iso()}
         await db.kb_entries.insert_one(dict(doc))
         await record_audit(user["org_id"], user["email"], "kb_create", "kb_entry", doc["id"],
                            after={"title": req.title})
         doc.pop("_id", None)
         return doc
+
+    @router.put("/{kb_id}/toggle")
+    async def toggle_kb(kb_id: str, user: dict = Depends(get_current_user)):
+        entry = await db.kb_entries.find_one({"id": kb_id, "org_id": user["org_id"]}, {"_id": 0})
+        if not entry:
+            from fastapi import HTTPException
+            raise HTTPException(404, "Entry not found")
+        new_active = not entry.get("active", True)
+        await db.kb_entries.update_one({"id": kb_id, "org_id": user["org_id"]}, {"$set": {"active": new_active}})
+        await record_audit(user["org_id"], user["email"], "kb_toggle", "kb_entry", kb_id,
+                           before={"active": entry.get("active", True)}, after={"active": new_active})
+        return {"id": kb_id, "active": new_active}
 
     @router.post("/upload")
     async def upload_kb(user: dict = Depends(get_current_user), file: UploadFile = File(...)):
@@ -57,7 +72,7 @@ def build_kb_router(get_current_user, record_audit):
         if not content.strip():
             raise HTTPException(400, "No extractable text found in file.")
         doc = {"id": f"kb_{uuid.uuid4().hex[:16]}", "org_id": user["org_id"], "title": name,
-               "content": content[:20000], "source": "upload", "created_at": now_iso()}
+               "content": content[:20000], "source": "upload", "active": True, "created_at": now_iso()}
         await db.kb_entries.insert_one(dict(doc))
         await record_audit(user["org_id"], user["email"], "kb_upload", "kb_entry", doc["id"],
                            after={"title": name, "chars": len(content)})

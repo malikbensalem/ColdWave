@@ -21,7 +21,7 @@ export default function Settings() {
         <TabsList>
           <TabsTrigger value="integrations" data-testid="tab-integrations"><Plug size={16} className="mr-1.5" />Integrations</TabsTrigger>
           <TabsTrigger value="org" data-testid="tab-org"><Buildings size={16} className="mr-1.5" />Organisation</TabsTrigger>
-          <TabsTrigger value="opening" data-testid="tab-opening"><Sparkle size={16} className="mr-1.5" />Opening &amp; KB</TabsTrigger>
+          <TabsTrigger value="opening" data-testid="tab-opening"><BookBookmark size={16} className="mr-1.5" />Company Overview</TabsTrigger>
           <TabsTrigger value="users" data-testid="tab-users"><UsersThree size={16} className="mr-1.5" />Users</TabsTrigger>
           <TabsTrigger value="audit" data-testid="tab-audit"><ListMagnifyingGlass size={16} className="mr-1.5" />Audit</TabsTrigger>
           <TabsTrigger value="playbook" data-testid="tab-playbook"><BookOpen size={16} className="mr-1.5" />Playbook</TabsTrigger>
@@ -41,7 +41,15 @@ function IntegrationsTab() {
   const [data, setData] = useState(null);
   const [elevenStatus, setElevenStatus] = useState(null);
   const [elevenBusy, setElevenBusy] = useState(false);
-  const load = useCallback(async () => { try { const r = await api.get("/settings/integrations"); setData(r.data); } catch (e) { toast.error(apiErr(e)); } }, []);
+  const [llmModels, setLlmModels] = useState({});
+  const [llmStatus, setLlmStatus] = useState(null);
+  const [llmBusy, setLlmBusy] = useState(false);
+  const load = useCallback(async () => {
+    try {
+      const [r, m] = await Promise.all([api.get("/settings/integrations"), api.get("/llm/models")]);
+      setData(r.data); setLlmModels(m.data);
+    } catch (e) { toast.error(apiErr(e)); }
+  }, []);
   useEffect(() => { load(); }, [load]);
   const save = async () => { try { await api.put("/settings/integrations", data); toast.success("Integrations saved"); } catch (e) { toast.error(apiErr(e)); } };
   const testTcx = async () => { try { const r = await api.post("/settings/integrations/tcx/test"); toast.success(r.data.message); } catch (e) { toast.error(apiErr(e)); } };
@@ -53,6 +61,22 @@ function IntegrationsTab() {
       r.data.valid ? toast.success(r.data.message) : toast.error(r.data.message);
     } catch (e) { toast.error(apiErr(e)); }
     finally { setElevenBusy(false); }
+  };
+  const PROVIDER_KEY = { openai: "openai_api_key", anthropic: "anthropic_api_key", gemini: "gemini_api_key" };
+  const validateLlm = async () => {
+    setLlmBusy(true); setLlmStatus(null);
+    try {
+      const r = await api.post("/settings/integrations/llm/test", { provider: data.llm_provider, api_key: data[PROVIDER_KEY[data.llm_provider]] || "", model: data.llm_model });
+      setLlmStatus(r.data);
+      r.data.valid ? toast.success(r.data.message) : toast.error(r.data.message);
+    } catch (e) { toast.error(apiErr(e)); }
+    finally { setLlmBusy(false); }
+  };
+  const setProvider = (e) => {
+    const p = e.target.value;
+    const models = llmModels[p] || [];
+    setData({ ...data, llm_provider: p, llm_model: models[0] || data.llm_model });
+    setLlmStatus(null);
   };
   const set = (k) => (e) => setData({ ...data, [k]: e.target.type === "checkbox" ? e.target.checked : (e.target.type === "number" ? parseFloat(e.target.value) : e.target.value) });
   if (!data) return <div className="text-sm text-muted-foreground">Loading…</div>;
@@ -102,12 +126,18 @@ function IntegrationsTab() {
         <p className="text-xs text-muted-foreground">From Meta → WhatsApp → API Setup. Webhook URL: <code className="text-foreground">{`{backend}/api/webhooks/whatsapp`}</code>. Without credentials, WhatsApp runs in safe mock mode.</p>
       </Section>
 
-      <Section icon={Brain} title="AI Language Model" badge="Emergent Key">
+      <Section icon={Brain} title="AI Language Model" badge={llmStatus ? (llmStatus.valid ? "Valid ✓" : "Check key") : (data[PROVIDER_KEY[data.llm_provider]] ? "Custom key" : "Emergent key")}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Sel label="Provider" testid="llm-provider" value={data.llm_provider} onChange={set("llm_provider")} options={[{ value: "anthropic", label: "Anthropic" }, { value: "openai", label: "OpenAI" }, { value: "gemini", label: "Gemini" }]} />
-          <F label="Model" testid="llm-model" value={data.llm_model} onChange={set("llm_model")} />
+          <Sel label="Provider" testid="llm-provider" value={data.llm_provider} onChange={setProvider} options={[{ value: "anthropic", label: "Anthropic (Claude)" }, { value: "openai", label: "OpenAI" }, { value: "gemini", label: "Google Gemini" }]} />
+          <Sel label="Model" testid="llm-model" value={data.llm_model} onChange={set("llm_model")} options={(llmModels[data.llm_provider] || []).map((m) => ({ value: m, label: m }))} />
         </div>
-        <p className="text-xs text-muted-foreground">Script writing, test-call conversation and transcript analysis. Default: Claude Sonnet 4.6 via the Emergent Universal key.</p>
+        <F label={`${data.llm_provider} API key (optional — leave blank to use the Emergent key)`} testid="llm-key" type="password"
+          value={data[PROVIDER_KEY[data.llm_provider]] || ""} onChange={set(PROVIDER_KEY[data.llm_provider])} placeholder="Bring your own key…" />
+        <div className="flex items-center gap-3">
+          <button data-testid="validate-llm-button" onClick={validateLlm} disabled={llmBusy} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">{llmBusy ? "Checking…" : "Validate key"}</button>
+          {llmStatus && <span data-testid="llm-validate-result" className={`text-xs ${llmStatus.valid ? "text-success" : "text-destructive"}`}>{llmStatus.message}</span>}
+        </div>
+        <p className="text-xs text-muted-foreground">Powers scripts, live test-call conversation, and transcript analysis. Add your own provider key to use your account; otherwise the Emergent Universal key is used.</p>
       </Section>
 
       <Section icon={MicrosoftOutlookLogo} title="Office 365 SSO (Azure AD)" badge={data.o365_enabled ? "Enabled" : "Disabled"}>
@@ -248,6 +278,7 @@ function OpeningTab() {
     e.target.value = "";
   };
   const remove = async (id) => { await api.delete(`/kb/${id}`); load(); };
+  const toggle = async (id) => { await api.put(`/kb/${id}/toggle`); load(); };
   if (!org) return <div className="text-sm text-muted-foreground">Loading…</div>;
 
   return (
@@ -257,37 +288,43 @@ function OpeningTab() {
           {["scripted", "kb"].map((m) => (
             <button key={m} data-testid={`opening-mode-${m}`} onClick={() => saveOrg({ opening_mode: m })}
               className={`flex-1 h-10 rounded-sm text-sm font-semibold capitalize border ${org.opening_mode === m ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:bg-accent"}`}>
-              {m === "kb" ? "Knowledge-base" : "Scripted"}
+              {m === "kb" ? "From company overview" : "Scripted"}
             </button>
           ))}
         </div>
         <Sel label="Creativity / variation" testid="opening-creativity" value={org.opening_creativity || "medium"} onChange={(e) => saveOrg({ opening_creativity: e.target.value })}
           options={[{ value: "low", label: "Low" }, { value: "medium", label: "Medium" }, { value: "high", label: "High" }]} />
         <F label="Max opening length (chars)" testid="opening-maxlen" type="number" value={org.opening_max_length ?? 220} onChange={(e) => saveOrg({ opening_max_length: parseInt(e.target.value) || 220 })} />
-        <p className="text-xs text-muted-foreground">In KB mode, openings are generated from your knowledge base with brand/compliance guardrails. If retrieval or generation fails, it automatically falls back to the scripted opening.</p>
+        <p className="text-xs text-muted-foreground">The AI sales agent uses your ACTIVE company overview documents below to talk about the company and answer questions during calls. In "From company overview" mode, the opening line is generated from them too (falls back to scripted if unavailable).</p>
       </Section>
 
-      <Section icon={BookBookmark} title="Knowledge Base">
+      <Section icon={BookBookmark} title="Company Overview Documents">
         <div className="flex items-center gap-2">
           <label data-testid="kb-upload-label" className="inline-flex items-center gap-1.5 h-9 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent cursor-pointer">
             <UploadSimple size={15} weight="bold" /> Upload .pdf / .txt
             <input data-testid="kb-upload" type="file" accept=".pdf,.txt,.md" onChange={upload} className="hidden" />
           </label>
-          <span className="text-xs text-muted-foreground">{kb.length} entries</span>
+          <span className="text-xs text-muted-foreground">{kb.filter((k) => k.active !== false).length}/{kb.length} active</span>
         </div>
         <div className="space-y-2">
           <F label="Title" testid="kb-title" value={entry.title} onChange={(e) => setEntry({ ...entry, title: e.target.value })} />
-          <textarea data-testid="kb-content" value={entry.content} onChange={(e) => setEntry({ ...entry, content: e.target.value })} rows={3} placeholder="Paste FAQ / product facts…"
+          <textarea data-testid="kb-content" value={entry.content} onChange={(e) => setEntry({ ...entry, content: e.target.value })} rows={3} placeholder="Paste company info, products, FAQs, pricing…"
             className="w-full rounded-sm border border-input bg-card p-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-          <button data-testid="kb-add" onClick={addEntry} className="inline-flex items-center gap-1.5 h-9 px-3 bg-foreground text-background rounded-sm text-sm font-medium"><Plus size={15} weight="bold" /> Add entry</button>
+          <button data-testid="kb-add" onClick={addEntry} className="inline-flex items-center gap-1.5 h-9 px-3 bg-foreground text-background rounded-sm text-sm font-medium"><Plus size={15} weight="bold" /> Add document</button>
         </div>
-        <div className="max-h-48 overflow-y-auto space-y-1.5">
-          {kb.map((k) => (
-            <div key={k.id} className="flex items-center justify-between border border-border rounded-sm px-3 py-2">
-              <div className="min-w-0"><div className="text-sm font-medium truncate">{k.title}</div><div className="text-xs text-muted-foreground capitalize">{k.source}</div></div>
-              <button data-testid={`kb-delete-${k.id}`} onClick={() => remove(k.id)} className="text-muted-foreground hover:text-destructive"><Trash size={14} /></button>
-            </div>
-          ))}
+        <div className="max-h-56 overflow-y-auto space-y-1.5">
+          {kb.map((k) => {
+            const active = k.active !== false;
+            return (
+              <div key={k.id} className={`flex items-center justify-between border rounded-sm px-3 py-2 ${active ? "border-success/40 bg-success/5" : "border-border opacity-60"}`}>
+                <div className="min-w-0"><div className="text-sm font-medium truncate">{k.title}</div><div className="text-xs text-muted-foreground capitalize">{k.source} · {active ? "active" : "disabled"}</div></div>
+                <div className="flex items-center gap-2">
+                  <button data-testid={`kb-toggle-${k.id}`} onClick={() => toggle(k.id)} className={`text-xs font-semibold px-2 h-7 rounded-sm border ${active ? "border-success/40 text-success" : "border-border text-muted-foreground"}`}>{active ? "Active" : "Disabled"}</button>
+                  <button data-testid={`kb-delete-${k.id}`} onClick={() => remove(k.id)} className="text-muted-foreground hover:text-destructive"><Trash size={14} /></button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </Section>
     </div>

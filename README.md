@@ -25,12 +25,22 @@ make install
 ```
 
 ## One-command start (backend + frontend together)
+
+### macOS / Linux / WSL2
 ```bash
 ./start.sh
 # or
 make dev
 ```
-This single command:
+
+### Windows (10/11)
+1. Install **Python 3.11+**, **Node 18+**, and Yarn (`npm install -g yarn`), and have **MongoDB** running (local service, Docker, or a MongoDB Atlas `MONGO_URL`).
+2. Copy env templates: `copy backend\.env.example backend\.env` and `copy frontend\.env.example frontend\.env`, then edit `backend\.env`.
+3. Double-click **`start.bat`** (or run it in a terminal).
+
+`start.bat` validates Python/Node/Yarn + your `.env` files, checks MongoDB is reachable, installs frontend deps on first run, then opens the **backend** and **frontend** in two windows. Close those two windows to stop.
+
+Either runner:
 - validates dependencies (python3, node, yarn) and `.env` files with clear errors,
 - verifies MongoDB is reachable,
 - installs frontend deps on first run,

@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 3 testing: BYO LLM key + model dropdown, Company Overview rename + active toggle, two script types (line-by-line + personality), Windows easy setup. Backend pytest 53/53 pass (incl. new test_llm_config.py). Frontend Playwright covered login, LLM provider/model dropdowns + validate (Gemini=valid, OpenAI=quota-exceeded, sk-bad=invalid), Company Overview tab rename + KB Active/Disabled toggle, both script types save with correct type badge. Windows artifacts (start.bat + README Windows section) verified statically.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/settings/integrations/llm/test", "issue": "Some Gemini model names in the dropdown return quota-exceeded for the same key that succeeds with gemini-2.5-flash / gemini-3.5-flash (e.g. gemini-3.1-pro-preview, gemini-2.5-pro). This appears provider-side (per-model quota), but several models in /api/llm/models do not exist publicly yet (e.g. gpt-5.4/5.5, gemini-3.x preview names) — UX risk: a user picking the default first model from a fresh Gemini dropdown will see 'quota exceeded' even with a perfectly valid key."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Settings.IntegrationsTab (BYO LLM)", "issue": "Provider-specific API key fields are sticky across provider switches: typing the Gemini key, then switching the Provider dropdown to OpenAI (without explicitly clearing) leaves data.gemini_api_key populated. Clicking Save with provider=anthropic and the visible llm-key empty persists the previously-typed Gemini key in the workspace. After my test the workspace had gemini_api_key set despite the input being blank at save time. Had to clear via PUT /api/settings/integrations. Expected: Save should only persist the *currently selected* provider's key, OR switching providers should not silently retain a typed key for the previous provider.", "selector": "[data-testid=llm-key] / [data-testid=llm-provider] / [data-testid=save-integrations-button]", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_llm_config.py",
+    "/app/backend/tests/test_coldwave_api.py",
+    "/app/backend/tests/test_iteration2_api.py",
+    "/app/backend/tests/test_audit_kb.py",
+    "/app/backend/tests/test_messaging.py",
+    "/app/backend/tests/test_tts_selection.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix sticky LLM key bug in Settings.IntegrationsTab: when the user changes the Provider dropdown, either clear the previously-typed `llm-key` field from form state, OR have Save only PUT the api_key field that matches the currently-selected provider. Right now the user can leak a custom key into the workspace by typing → validate → switch provider → save.",
+    "Review Gemini default model in /api/llm/models — the first option (`gemini-3.1-pro-preview`) returns quota-exceeded against a key that works fine on `gemini-2.5-flash`. Consider promoting a known-stable model to the top so the dropdown's default validates cleanly.",
+    "Consider rounding out OpenAI/Gemini model lists with currently-public names so users don't pick non-existent models by default."
+  ],
+  "critical_code_review_comments": [
+    "BYO LLM key handling in Settings.IntegrationsTab.jsx: form state retains every provider's key independently — the Save handler PUTs the full data object, so prior typed keys remain. Either reset {openai/anthropic/gemini}_api_key on provider change, or scope Save to only the active provider's key.",
+    "Backend integrations.validate_llm_key correctly distinguishes Invalid vs quota-exceeded vs valid — good UX (matches spec).",
+    "GET /api/llm/models is unauthenticated-friendly and returns three lists keyed by provider; OK. Lists include several pre-release model names — confirm these resolve in your LLM provider abstraction or document them as 'coming soon'.",
+    "Frontend uses native <select> elements with data-testids for llm-provider/llm-model (good — easy to test via select_option).",
+    "Company Overview tab rename complete; kb-toggle endpoint (PUT /api/kb/{id}/toggle) works server-side and the UI reflects Active <-> Disabled state.",
+    "Script type badges (`Line-by-line` / `Personality`) render correctly in script cards; both selectable in Test Calls (script-type discriminator present in POST /api/scripts payload).",
+    "Windows start.bat exists at /app/start.bat and README has a 'Windows (10/11)' section referencing it — matches spec."
+  ],
+  "updated_files": [
+    "/app/test_reports/pytest/pytest_results.xml (regenerated, 53 passed)",
+    "/app/test_reports/iteration_3.json (this file)"
+  ],
+  "success_rate": {"backend": "53/53 = 100%", "frontend": "100% on tested flows (Login, LLM dropdowns+validate x3 outcomes, Company Overview rename+toggle, two script types save with badges) — 1 high-priority UI bug found re: sticky LLM key on Save"},
+  "test_credentials": "admin@coldwave.ai / Admin123! (seeded). /app/memory/test_credentials.md present.",
+  "seed_data_creation": "All TEST_ data created during this run was deleted via API after testing (KB 'TEST Refund Policy', scripts 'TEST Line Script' and 'TEST Personality Witty'). Workspace integration keys were also cleared via PUT /api/settings/integrations after I discovered the sticky-key UI bug — workspace now back to Emergent key (no custom openai/anthropic/gemini keys saved).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Total backend tests: 53 (added 4 in test_llm_config.py). LLM validation endpoint: POST /api/settings/integrations/llm/test with {provider, api_key, model} returns {valid: bool, message: str}. Three outcomes: 'works with <model>' (valid=true), '<provider> key authenticated, but quota/billing is exceeded' (valid=false), 'Invalid <provider> API key.' (valid=false). Frontend testids: llm-provider, llm-model, llm-key (password input), validate-llm-button, llm-validate-result. The provider dropdown is a native <select> — use page.select_option('[data-testid=llm-provider]', 'gemini'). Company Overview tab id is still 'tab-opening' (label-only changed). KB delete testid: kb-delete-{id}. Two script types: testids script-type-line / script-type-personality (buttons), script-content (line) / script-personality (textarea). Save script: save-script-button. Known: typing a key for one provider then switching the dropdown does NOT clear the prior provider's key from form state — Save will persist it. Always explicitly clear via API after BYO LLM UI tests. Test keys used: Gemini AQ.Ab8R… validates only on gemini-2.5-flash and gemini-3.5-flash (other Gemini models in dropdown return quota-exceeded); OpenAI sk-proj-6OO0… returns quota-exceeded; sk-bad returns Invalid.",
+  "rca of the issue": "Sticky LLM key bug RCA: IntegrationsTab keeps a single `data` object with separate fields data.openai_api_key / data.anthropic_api_key / data.gemini_api_key. The llm-key input is bound to whichever provider is currently selected in llm-provider. When you type a key for provider A, switch to B, type nothing (or another key), and Save, the PUT body still contains the unchanged data.{A}_api_key from before. Repro: (1) Settings → Integrations → set provider=gemini → paste any string in llm-key. (2) Switch provider to openai. (3) Clear llm-key (now bound to openai_api_key). (4) Click Save. (5) GET /api/settings/integrations shows gemini_api_key still set. Mitigation: on provider change, reset all three provider key fields except the currently-selected one to '' in form state; or make Save only send openai/anthropic/gemini_api_key for the currently active provider; or render three independent labelled inputs (one per provider) so user can see/clear each."
+}

@@ -57,21 +57,91 @@ async def generate_voice_preview(voice_id: str, text: str, org_key: str = "") ->
         return {"mock": True, "audio_url": None, "voice": voice, "error": str(e)}
 
 
-def _chat(session_id: str, system_message: str, model: str = "claude-sonnet-4-6") -> LlmChat:
+# ---------------- LLM provider config (bring-your-own keys + Emergent fallback) ----------------
+LLM_MODELS = {
+    "openai": ["gpt-5.4", "gpt-5.5", "gpt-5.4-mini", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5-mini",
+               "gpt-4o", "gpt-4.1", "gpt-4.1-mini", "o3", "o4-mini"],
+    "anthropic": ["claude-sonnet-4-6", "claude-opus-4-8", "claude-opus-4-7", "claude-haiku-4-5-20251001",
+                  "claude-sonnet-4-5-20250929"],
+    "gemini": ["gemini-3.1-pro-preview", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-2.5-pro",
+               "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+}
+PROVIDER_KEY_FIELD = {"openai": "openai_api_key", "anthropic": "anthropic_api_key", "gemini": "gemini_api_key"}
+DEFAULT_MODEL = {"openai": "gpt-5.4", "anthropic": "claude-sonnet-4-6", "gemini": "gemini-3.1-pro-preview"}
+
+
+def get_llm_models():
+    return LLM_MODELS
+
+
+def llm_config(org: dict) -> dict:
+    """Resolve provider/model/api_key. Uses the workspace's own provider key when present,
+    otherwise the Emergent Universal key. Returns {provider, model, api_key, source}."""
+    integ = (org or {}).get("integrations", {})
+    provider = integ.get("llm_provider") or "anthropic"
+    if provider not in LLM_MODELS:
+        provider = "anthropic"
+    model = integ.get("llm_model") or DEFAULT_MODEL[provider]
+    if model not in LLM_MODELS[provider]:
+        model = DEFAULT_MODEL[provider]
+    custom_key = integ.get(PROVIDER_KEY_FIELD[provider], "")
+    if custom_key:
+        return {"provider": provider, "model": model, "api_key": custom_key, "source": "custom"}
+    return {"provider": provider, "model": model, "api_key": EMERGENT_LLM_KEY, "source": "emergent"}
+
+
+async def validate_llm_key(provider: str, api_key: str, model: str = "") -> dict:
+    """Validate a provider key via a tiny chat round-trip."""
+    if provider not in LLM_MODELS:
+        return {"valid": False, "message": f"Unknown provider '{provider}'."}
+    if not api_key:
+        return {"valid": False, "message": "No API key provided."}
+    use_model = model if model in LLM_MODELS[provider] else DEFAULT_MODEL[provider]
+    try:
+        chat = LlmChat(api_key=api_key, session_id="keycheck", system_message="Reply with 'ok'.").with_model(provider, use_model)
+        await chat.send_message(UserMessage(text="ping"))
+        return {"valid": True, "message": f"{provider} key works with {use_model}."}
+    except Exception as e:
+        msg = str(e)
+        low = msg.lower()
+        if "ratelimit" in low or "quota" in low or "billing" in low or "429" in low:
+            return {"valid": False, "message": f"{provider} key authenticated, but quota/billing is exceeded — add credits at the provider."}
+        if "401" in msg or "auth" in low or "api key" in low or "api_key" in low:
+            return {"valid": False, "message": f"Invalid {provider} API key."}
+        return {"valid": False, "message": f"Validation failed: {msg[:160]}"}
+
+
+def _chat(session_id: str, system_message: str, org: dict = None) -> LlmChat:
+    cfg = llm_config(org or {})
     return LlmChat(
-        api_key=EMERGENT_LLM_KEY,
+        api_key=cfg["api_key"],
         session_id=session_id,
         system_message=system_message,
-    ).with_model("anthropic", model)
+    ).with_model(cfg["provider"], cfg["model"])
 
 
-async def llm_generate(session_id: str, system_message: str, prompt: str, model: str = "claude-sonnet-4-6") -> str:
-    chat = _chat(session_id, system_message, model)
+async def llm_generate(session_id: str, system_message: str, prompt: str, org: dict = None) -> str:
+    chat = _chat(session_id, system_message, org)
     resp = await chat.send_message(UserMessage(text=prompt))
     return resp if isinstance(resp, str) else str(resp)
 
 
-async def generate_script(product: str, audience: str, objective: str, tone: str, session_id: str) -> str:
+async def generate_script(product: str, audience: str, objective: str, tone: str, session_id: str,
+                          script_type: str = "line_by_line", personality: str = "", org: dict = None) -> str:
+    if script_type == "personality":
+        system = (
+            "You design AI sales-agent PERSONAS for UK B2B cold calls. Produce a concise persona brief the "
+            "agent will embody to hold a natural, unscripted conversation. Stay compliant (clear opt-out, no "
+            "misleading claims). Output labelled sections only."
+        )
+        prompt = (
+            f"Create a sales-agent persona.\nProduct/Service: {product}\nTarget audience: {audience}\n"
+            f"Objective: {objective}\nDesired tone/personality: {personality or tone}\n\n"
+            "Sections: [PERSONA NAME & ROLE], [PERSONALITY & TONE], [CONVERSATION GOALS], "
+            "[OBJECTION STYLE], [OPT-OUT / COMPLIANCE]. Keep it tight."
+        )
+        return await llm_generate(session_id, system, prompt, org)
+
     system = (
         "You are an expert UK B2B cold-calling copywriter. You write compliant, natural "
         "telephone scripts for outbound sales. You ALWAYS open by stating the caller's name "
@@ -89,24 +159,46 @@ async def generate_script(product: str, audience: str, objective: str, tone: str
         "[VALUE PROPOSITION], [OBJECTION HANDLING] (cover 3 common objections), [CLOSE], "
         "[OPT-OUT / COMPLIANCE]. Keep total length suitable for a 2-3 minute call."
     )
-    return await llm_generate(session_id, system, prompt)
+    return await llm_generate(session_id, system, prompt, org)
 
 
-async def agent_reply(script: str, history: list, prospect_message: str, session_id: str) -> str:
-    system = (
-        "You are an AI outbound sales agent on a live UK cold call. You strictly follow the "
-        "provided SCRIPT but adapt naturally to what the prospect says. You handle objections "
-        "professionally. If the prospect asks to be removed, says 'not interested', 'stop calling', "
-        "'opt out', or 'do not call', you MUST immediately, politely confirm you will remove them and "
-        "end the call. Keep responses short and human, like real speech. Output ONLY the agent's spoken words."
-        f"\n\nSCRIPT:\n{script}"
+def _company_block(company_overview: str) -> str:
+    if not company_overview:
+        return ""
+    return ("\n\nCOMPANY OVERVIEW (authoritative facts about your company — use these to answer ANY "
+            f"question, including ones not covered by the script):\n{company_overview[:4000]}")
+
+
+async def agent_reply(script: str, history: list, prospect_message: str, session_id: str,
+                      script_type: str = "line_by_line", personality: str = "",
+                      company_overview: str = "", org: dict = None) -> str:
+    compliance = (
+        "If the prospect asks to be removed, says 'not interested', 'stop calling', 'opt out', or "
+        "'do not call', you MUST immediately, politely confirm you will remove them and end the call. "
+        "Never use misleading claims. Keep responses short and human, like real speech. "
+        "Output ONLY the agent's spoken words."
     )
+    if script_type == "personality":
+        system = (
+            "You are an AI outbound sales agent on a live UK cold call. You EMBODY the persona below and "
+            "hold a natural, unscripted conversation, steering toward the goal. "
+            f"{compliance}\n\nPERSONA:\n{personality or script}"
+            + _company_block(company_overview)
+        )
+    else:
+        system = (
+            "You are an AI outbound sales agent on a live UK cold call. You follow the provided SCRIPT "
+            "line by line, but adapt naturally. If the prospect asks something the script does NOT cover, "
+            "answer it accurately using the COMPANY OVERVIEW (never invent facts). "
+            f"{compliance}\n\nSCRIPT:\n{script}"
+            + _company_block(company_overview)
+        )
     convo = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in history])
     prompt = f"Conversation so far:\n{convo}\n\nPROSPECT: {prospect_message}\n\nAGENT:"
-    return await llm_generate(session_id, system, prompt)
+    return await llm_generate(session_id, system, prompt, org)
 
 
-async def analyze_transcript(transcript: str, session_id: str) -> dict:
+async def analyze_transcript(transcript: str, session_id: str, org: dict = None) -> dict:
     import json
     system = (
         "You are a call QA analyst. Analyse the cold call transcript and respond with STRICT JSON only, "
@@ -115,7 +207,7 @@ async def analyze_transcript(transcript: str, session_id: str) -> dict:
         '"summary" (one sentence), "next_action" (short suggestion), "score" (0-100 interest score).'
     )
     prompt = f"Transcript:\n{transcript}\n\nReturn the JSON analysis."
-    raw = await llm_generate(session_id, system, prompt)
+    raw = await llm_generate(session_id, system, prompt, org)
     try:
         cleaned = raw.strip().replace("```json", "").replace("```", "").strip()
         return json.loads(cleaned)
@@ -239,7 +331,7 @@ async def generate_kb_opening(org: dict, kb_entries: list, product_context: str,
     )
     prompt = f"Knowledge base:\n{kb_text}\n\nProduct/context: {product_context}\n\nWrite the opening line:"
     try:
-        chat = _chat(session_id, system)
+        chat = _chat(session_id, system, org)
         from emergentintegrations.llm.chat import UserMessage
         resp = await chat.send_message(UserMessage(text=prompt))
         opening = (resp if isinstance(resp, str) else str(resp)).strip().strip('"')

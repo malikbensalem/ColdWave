@@ -8,12 +8,13 @@ from models import (
     ContactCreate, ContactUpdate, ScriptCreate, ScriptUpdate, GenerateScriptRequest,
     CampaignCreate, CampaignUpdate, VoicePreviewRequest, TestCallStartRequest,
     TestCallTurnRequest, DNCAddRequest, ErasureRequest, OrgUpdateRequest,
-    IntegrationSettings, InviteUserRequest, UpdateUserRequest, ElevenLabsTestRequest, now_utc, new_id,
+    IntegrationSettings, InviteUserRequest, UpdateUserRequest, ElevenLabsTestRequest,
+    LLMTestRequest, now_utc, new_id,
 )
 from integrations import (
     VOICE_CATALOG, get_voice, generate_voice_preview, generate_script,
     agent_reply, analyze_transcript, generate_tts, select_tts_provider,
-    validate_elevenlabs_key, generate_kb_opening,
+    validate_elevenlabs_key, generate_kb_opening, get_llm_models, validate_llm_key, llm_config,
 )
 from audit import record_audit
 from kb import get_kb_entries
@@ -145,16 +146,22 @@ async def list_scripts(user: dict = Depends(get_current_user)):
 async def create_script(req: ScriptCreate, user: dict = Depends(get_current_user)):
     doc = {
         "id": new_id("script"), "org_id": user["org_id"], "name": req.name,
-        "content": req.content, "objective": req.objective, "created_at": now_utc().isoformat(),
+        "content": req.content, "objective": req.objective,
+        "script_type": req.script_type or "line_by_line", "personality": req.personality or "",
+        "created_at": now_utc().isoformat(),
     }
     await db.scripts.insert_one(dict(doc))
-    await audit(user["org_id"], user, "create", entity="script", entity_id=doc["id"], after={"name": req.name})
+    await audit(user["org_id"], user, "create", entity="script", entity_id=doc["id"], after={"name": req.name, "script_type": doc["script_type"]})
     return clean(doc)
 
 
 @router.post("/scripts/generate")
 async def ai_generate_script(req: GenerateScriptRequest, user: dict = Depends(get_current_user)):
-    content = await generate_script(req.product, req.audience, req.objective, req.tone, session_id=f"script_{user['org_id']}")
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    content = await generate_script(
+        req.product, req.audience, req.objective, req.tone,
+        session_id=f"script_{user['org_id']}", script_type=req.script_type,
+        personality=req.personality, org=org)
     return {"content": content}
 
 
@@ -238,6 +245,24 @@ async def test_elevenlabs(req: ElevenLabsTestRequest, user: dict = Depends(requi
     return result
 
 
+@router.get("/llm/models")
+async def llm_models(user: dict = Depends(get_current_user)):
+    return get_llm_models()
+
+
+@router.post("/settings/integrations/llm/test")
+async def test_llm(req: LLMTestRequest, user: dict = Depends(require_admin)):
+    """Validate a custom LLM provider key (OpenAI / Anthropic / Gemini)."""
+    key = req.api_key
+    if not key:
+        org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+        field = {"openai": "openai_api_key", "anthropic": "anthropic_api_key", "gemini": "gemini_api_key"}.get(req.provider, "")
+        key = (org or {}).get("integrations", {}).get(field, "")
+    result = await validate_llm_key(req.provider, key, req.model)
+    await audit(user["org_id"], user, "llm_key_test", detail=f"{req.provider} valid={result['valid']}", entity="integration")
+    return result
+
+
 # ---------------- Compliance helpers ----------------
 def within_calling_hours(org: dict) -> dict:
     tz = ZoneInfo("Europe/London")
@@ -265,6 +290,12 @@ async def start_test_call(req: TestCallStartRequest, user: dict = Depends(get_cu
             voice_id = voice_id or camp.get("voice_id")
     script = await db.scripts.find_one({"id": script_id, "org_id": user["org_id"]}, {"_id": 0}) if script_id else None
     script_content = script["content"] if script else "Introduce yourself, your company, and your offer politely."
+    script_type = (script or {}).get("script_type", "line_by_line")
+    personality = (script or {}).get("personality", "")
+
+    # Active company-overview documents power both the opening and live answers.
+    active_kb = await get_kb_entries(user["org_id"], active_only=True)
+    company_overview = "\n\n".join([f"[{e['title']}]\n{e['content'][:1500]}" for e in active_kb])
 
     # DNC / compliance check if contact linked
     contact = None
@@ -283,7 +314,7 @@ async def start_test_call(req: TestCallStartRequest, user: dict = Depends(get_cu
     opening = scripted_opening
     opening_meta = {"mode": "scripted", "sources": [], "fallback": False, "reason": "scripted_default"}
     if (org or {}).get("opening_mode") == "kb":
-        kb_entries = await get_kb_entries(user["org_id"])
+        kb_entries = active_kb
         product_context = (script.get("objective") if script else "") or "Cold outreach call"
         kb_res = await generate_kb_opening(
             org, kb_entries, product_context,
@@ -306,6 +337,7 @@ async def start_test_call(req: TestCallStartRequest, user: dict = Depends(get_cu
         "id": new_id("call"), "org_id": user["org_id"], "campaign_id": req.campaign_id,
         "contact_id": req.contact_id, "voice_id": voice_id, "voice_name": voice["name"] if voice else None,
         "script_id": script_id, "script_content": script_content, "is_test": True,
+        "script_type": script_type, "personality": personality, "company_overview": company_overview,
         "status": "in_progress", "sentiment": None, "opted_out": False,
         "opening_meta": opening_meta, "tts_provider": tts["provider"],
         "transcript": [{"role": "agent", "content": opening, "ts": now_utc().isoformat()}],
@@ -329,7 +361,10 @@ async def test_call_turn(req: TestCallTurnRequest, user: dict = Depends(get_curr
         raise HTTPException(404, "Call not found")
     history = call.get("transcript", [])
     history.append({"role": "prospect", "content": req.message, "ts": now_utc().isoformat()})
-    reply = await agent_reply(call["script_content"], history, req.message, session_id=req.call_id)
+    reply = await agent_reply(
+        call["script_content"], history, req.message, session_id=req.call_id,
+        script_type=call.get("script_type", "line_by_line"), personality=call.get("personality", ""),
+        company_overview=call.get("company_overview", ""), org=org)
     history.append({"role": "agent", "content": reply, "ts": now_utc().isoformat()})
     await db.calls.update_one({"id": req.call_id}, {"$set": {"transcript": history}})
     tts = await generate_tts(org, call.get("voice_id"), reply) if call.get("voice_id") else {"provider": "browser", "audio_url": None, "reason": "no_voice", "error": None}
@@ -339,11 +374,12 @@ async def test_call_turn(req: TestCallTurnRequest, user: dict = Depends(get_curr
 
 @router.post("/calls/test/{call_id}/end")
 async def end_test_call(call_id: str, user: dict = Depends(get_current_user)):
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
     call = await db.calls.find_one({"id": call_id, "org_id": user["org_id"]}, {"_id": 0})
     if not call:
         raise HTTPException(404, "Call not found")
     transcript_text = "\n".join([f"{t['role']}: {t['content']}" for t in call.get("transcript", [])])
-    analysis = await analyze_transcript(transcript_text, session_id=call_id)
+    analysis = await analyze_transcript(transcript_text, session_id=call_id, org=org)
     await db.calls.update_one({"id": call_id}, {"$set": {
         "status": "completed", "sentiment": analysis.get("sentiment"),
         "opted_out": analysis.get("opted_out", False), "analysis": analysis,
