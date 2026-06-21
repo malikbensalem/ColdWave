@@ -53,3 +53,19 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - Bring-your-own LLM keys: per-workspace OpenAI/Anthropic/Gemini keys (falls back to Emergent key); provider + **model dropdowns** (`GET /api/llm/models`); `POST /api/settings/integrations/llm/test` validates a key (distinguishes valid / quota-exceeded / invalid). Saved-keys transparency row with per-provider clear (fixes sticky-key bug).
 - Company Overview (renamed from Opening & KB): upload/paste company docs, **activate/disable multiple** (`active` flag + `PUT /api/kb/{id}/toggle`). Active docs feed the live agent so it can answer off-script company questions, and (in KB opening mode) the opening line.
 - Script types: **line-by-line** (follows script; answers unaccounted questions from company overview) and **personality-driven** (persona generates a unique conversation). Stored on script; agent behavior branches by type.
+
+## Iteration 4 (2026-06-21) — Super admin, email campaigns, voices, settings UX
+- **Watermark removed** from `frontend/public/index.html` (badge + PostHog + emergent.sh tags).
+- **Super Admin / Owner**: new `owner` role; seeded `owner@coldwave.ai / Owner123!`. Owner-only `/api/admin/businesses`, `/api/admin/users`, `/api/admin/global-settings` (Platform Admin page). `require_owner` checks the real actor (impersonation does not grant owner powers).
+- **Impersonation**: `POST /api/auth/impersonate` + `/api/auth/stop-impersonation`; JWT carries `imp` claim. Owner can impersonate anyone; org-admin only within own org (not owners/self). Layout shows an impersonation banner with Stop.
+- **Global + org AI prompt**: owner sets a global system prompt that is PREPENDED; orgs extend via Settings → Organisation `ai_system_prompt`. `attach_system_prefix` injects both into AI calls.
+- **Email Campaigns** (new top-level page, MOCK send): connect Gmail/Office 365 (mock), audience targeting from CRM contacts, scheduler (now / scheduled / recurring) via `email_scheduler_loop`. Endpoints under `/api/email*` + `/api/email-campaigns`.
+- **Voices tab**: sample-text input, fixed Stop (managed `playAudio`/`stopAudio` in lib/voice.js), per-voice characteristics (name/persona) with global default + org override (`PUT /api/voices/{id}/characteristics`); identity injected into live agent.
+- **Settings UX**: ElevenLabs + LLM keys auto-validate (debounced) on paste; ElevenLabs auto-enables on valid key; hid stability/similarity/style; model is now a dropdown (`GET /api/elevenlabs/models`). KB documents now have View/Edit (`PUT /api/kb/{id}`); removed Opening Line Mode section.
+- Testing: backend 15/15 iteration_4 suite PASS; frontend flows verified. Email = MOCK, WhatsApp = MOCK.
+
+## Backlog / Next (updated)
+- P1: Disable email send-now button while pending (avoid double-count); real Gmail/O365 OAuth + actual delivery when desired.
+- P1: Resolve known iter-3 sticky-LLM-key-on-provider-switch edge case.
+- P1: Wire real 3CX Call Control API; bulk CSV lead import; auto-dialer queue.
+- P2: Vector KB retrieval; analytics export; `$lookup` for admin user/org joins at scale.

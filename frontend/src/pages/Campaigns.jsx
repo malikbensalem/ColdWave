@@ -255,7 +255,7 @@ function VoicesTab() {
           className="w-full rounded-sm border border-input bg-card p-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
         <div className="flex items-center justify-between">
           <p className="text-xs text-muted-foreground">Click a voice below to hear it speak your sample text. Use Stop to halt playback at any time.</p>
-          {playing && <button data-testid="voice-stop-all" onClick={stop} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent"><Stop size={14} weight="fill" /> Stop playback</button>}
+          <button data-testid="voice-stop-all" onClick={stop} disabled={!playing} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-50"><Stop size={14} weight="fill" /> Stop playback</button>
         </div>
       </div>
 
