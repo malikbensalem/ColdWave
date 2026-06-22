@@ -6,25 +6,29 @@ import {
 } from "@phosphor-icons/react";
 
 const NAV = [
-  { to: "/dashboard", label: "Dashboard", icon: ChartLineUp, testid: "nav-dashboard" },
-  { to: "/leads", label: "CRM / Leads", icon: Users, testid: "nav-leads" },
-  { to: "/campaigns", label: "Campaigns", icon: Megaphone, testid: "nav-campaigns" },
-  { to: "/email-campaigns", label: "Email Campaigns", icon: EnvelopeSimple, testid: "nav-email-campaigns" },
-  { to: "/test-calls", label: "Test Calls", icon: PhoneCall, testid: "nav-test-calls" },
-  { to: "/messaging", label: "WhatsApp", icon: WhatsappLogo, testid: "nav-messaging" },
-  { to: "/compliance", label: "Compliance", icon: ShieldCheck, testid: "nav-compliance" },
-  { to: "/settings", label: "Settings", icon: Gear, testid: "nav-settings" },
+  { to: "/dashboard", label: "Dashboard", icon: ChartLineUp, testid: "nav-dashboard", system: "dashboard" },
+  { to: "/leads", label: "CRM / Leads", icon: Users, testid: "nav-leads", system: "leads" },
+  { to: "/campaigns", label: "Campaigns", icon: Megaphone, testid: "nav-campaigns", system: "campaigns" },
+  { to: "/email-campaigns", label: "Email Campaigns", icon: EnvelopeSimple, testid: "nav-email-campaigns", system: "email_campaigns" },
+  { to: "/test-calls", label: "Test Calls", icon: PhoneCall, testid: "nav-test-calls", system: "test_calls" },
+  { to: "/messaging", label: "WhatsApp", icon: WhatsappLogo, testid: "nav-messaging", system: "whatsapp" },
+  { to: "/compliance", label: "Compliance", icon: ShieldCheck, testid: "nav-compliance", system: "compliance" },
+  { to: "/settings", label: "Settings", icon: Gear, testid: "nav-settings", system: "__settings" },
 ];
 
 export default function Layout() {
-  const { user, logout, stopImpersonation } = useAuth();
+  const { user, logout, stopImpersonation, can, hasCap } = useAuth();
   const navigate = useNavigate();
-  const isOwner = user?.role === "owner" || user?.impersonator?.role === "owner";
+  const showPlatformAdmin = hasCap("view_all_businesses");
+  // Settings is visible if the user can access any settings-related area.
+  const settingsVisible = ["integrations", "users", "roles", "audit"].some((s) => can(s, "read")) || true;
 
   const handleStop = async () => {
     try { await stopImpersonation(); toast.success("Returned to your account"); navigate("/admin"); }
     catch { toast.error("Could not stop impersonation"); }
   };
+
+  const visibleNav = NAV.filter((n) => (n.system === "__settings" ? settingsVisible : can(n.system, "read")));
 
   return (
     <div className="w-full h-screen flex overflow-hidden bg-background">
@@ -40,7 +44,7 @@ export default function Layout() {
         </div>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {isOwner && (
+          {showPlatformAdmin && (
             <NavLink
               to="/admin"
               data-testid="nav-admin"
@@ -54,7 +58,7 @@ export default function Layout() {
               Platform Admin
             </NavLink>
           )}
-          {NAV.map((n) => (
+          {visibleNav.map((n) => (
             <NavLink
               key={n.to}
               to={n.to}

@@ -1,36 +1,43 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 import api, { apiErr } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+import RolesManager from "../components/RolesManager";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import {
-  Plug, Buildings, UsersThree, BookOpen, FloppyDisk, Plus, Trash, Phone, MicrophoneStage, Brain, MicrosoftOutlookLogo, CheckCircle, Key, WhatsappLogo, Sparkle, ListMagnifyingGlass, UploadSimple, BookBookmark, PencilSimple,
+  Plug, Buildings, UsersThree, BookOpen, FloppyDisk, Plus, Trash, Phone, MicrophoneStage, Brain, MicrosoftOutlookLogo, CheckCircle, Key, WhatsappLogo, Sparkle, ListMagnifyingGlass, UploadSimple, BookBookmark, PencilSimple, ShieldStar, UserSwitch, Prohibit,
 } from "@phosphor-icons/react";
 
 export default function Settings() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  const showIntegrations = can("integrations", "read");
+  const showUsers = can("users", "read");
+  const showRoles = can("roles", "read");
+  const showAudit = can("audit", "read");
   return (
     <div className="space-y-5 animate-fadeup" data-testid="settings-page">
       <div>
         <h1 className="font-display font-bold text-3xl tracking-tight">Settings</h1>
         <p className="text-sm text-muted-foreground mt-1">Integrations, organisation, users and the credentials playbook.</p>
       </div>
-      {user?.role !== "admin" && <div className="text-sm bg-warning/15 border border-warning/40 text-warning-foreground rounded-sm p-3">Some settings require an admin role.</div>}
-      <Tabs defaultValue="integrations">
+      <Tabs defaultValue={showIntegrations ? "integrations" : "org"}>
         <TabsList>
-          <TabsTrigger value="integrations" data-testid="tab-integrations"><Plug size={16} className="mr-1.5" />Integrations</TabsTrigger>
+          {showIntegrations && <TabsTrigger value="integrations" data-testid="tab-integrations"><Plug size={16} className="mr-1.5" />Integrations</TabsTrigger>}
           <TabsTrigger value="org" data-testid="tab-org"><Buildings size={16} className="mr-1.5" />Organisation</TabsTrigger>
           <TabsTrigger value="opening" data-testid="tab-opening"><BookBookmark size={16} className="mr-1.5" />Company Overview</TabsTrigger>
-          <TabsTrigger value="users" data-testid="tab-users"><UsersThree size={16} className="mr-1.5" />Users</TabsTrigger>
-          <TabsTrigger value="audit" data-testid="tab-audit"><ListMagnifyingGlass size={16} className="mr-1.5" />Audit</TabsTrigger>
+          {showUsers && <TabsTrigger value="users" data-testid="tab-users"><UsersThree size={16} className="mr-1.5" />Users</TabsTrigger>}
+          {showRoles && <TabsTrigger value="roles" data-testid="tab-roles"><ShieldStar size={16} className="mr-1.5" />Roles &amp; Access</TabsTrigger>}
+          {showAudit && <TabsTrigger value="audit" data-testid="tab-audit"><ListMagnifyingGlass size={16} className="mr-1.5" />Audit</TabsTrigger>}
           <TabsTrigger value="playbook" data-testid="tab-playbook"><BookOpen size={16} className="mr-1.5" />Playbook</TabsTrigger>
         </TabsList>
-        <TabsContent value="integrations" className="mt-4"><IntegrationsTab /></TabsContent>
+        {showIntegrations && <TabsContent value="integrations" className="mt-4"><IntegrationsTab /></TabsContent>}
         <TabsContent value="org" className="mt-4"><OrgTab /></TabsContent>
         <TabsContent value="opening" className="mt-4"><OpeningTab /></TabsContent>
-        <TabsContent value="users" className="mt-4"><UsersTab me={user} /></TabsContent>
-        <TabsContent value="audit" className="mt-4"><AuditTab /></TabsContent>
+        {showUsers && <TabsContent value="users" className="mt-4"><UsersTab me={user} /></TabsContent>}
+        {showRoles && <TabsContent value="roles" className="mt-4"><RolesManager /></TabsContent>}
+        {showAudit && <TabsContent value="audit" className="mt-4"><AuditTab /></TabsContent>}
         <TabsContent value="playbook" className="mt-4"><PlaybookTab /></TabsContent>
       </Tabs>
     </div>
@@ -240,18 +247,36 @@ function OrgTab() {
 }
 
 function UsersTab({ me }) {
+  const { hasCap, can, impersonate } = useAuth();
+  const navigate = useNavigate();
   const [users, setUsers] = useState([]);
+  const [roles, setRoles] = useState([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "agent" });
-  const load = useCallback(async () => { try { const r = await api.get("/users"); setUsers(r.data); } catch (e) { toast.error(apiErr(e)); } }, []);
+  const [banUser, setBanUser] = useState(null);
+  const [banReason, setBanReason] = useState("");
+  const canCreate = can("users", "create");
+  const canDelete = can("users", "delete");
+  const canBan = hasCap("ban_users");
+  const canImpersonate = hasCap("impersonate_users");
+  const load = useCallback(async () => {
+    try {
+      const [u, r] = await Promise.all([api.get("/users"), api.get("/roles")]);
+      setUsers(u.data); setRoles(r.data.filter((x) => x.name !== "owner"));
+    } catch (e) { toast.error(apiErr(e)); }
+  }, []);
   useEffect(() => { load(); }, [load]);
   const invite = async (e) => { e.preventDefault(); try { await api.post("/users", form); toast.success("User added"); setOpen(false); setForm({ name: "", email: "", password: "", role: "agent" }); load(); } catch (err) { toast.error(apiErr(err)); } };
-  const changeRole = async (u) => { await api.put(`/users/${u.id}`, { role: u.role === "admin" ? "agent" : "admin" }); load(); };
+  const changeRole = async (u, role) => { try { await api.put(`/users/${u.id}`, { role }); load(); } catch (e) { toast.error(apiErr(e)); } };
   const remove = async (id) => { try { await api.delete(`/users/${id}`); load(); } catch (e) { toast.error(apiErr(e)); } };
+  const doBan = async () => { if (!banReason.trim()) { toast.error("A reason is required to ban."); return; } try { await api.post(`/users/${banUser.id}/ban`, { reason: banReason }); toast.success("User banned"); setBanUser(null); setBanReason(""); load(); } catch (e) { toast.error(apiErr(e)); } };
+  const unban = async (u) => { try { await api.post(`/users/${u.id}/unban`); toast.success("User unbanned"); load(); } catch (e) { toast.error(apiErr(e)); } };
+  const doImpersonate = async (u) => { try { await impersonate(u.id); toast.success(`Now impersonating ${u.name}`); navigate("/dashboard"); } catch (e) { toast.error(apiErr(e)); } };
+
   return (
-    <div className="space-y-3 max-w-2xl">
+    <div className="space-y-3 max-w-3xl">
       <div className="flex justify-end">
-        <Dialog open={open} onOpenChange={setOpen}>
+        {canCreate && <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild><button data-testid="invite-user-button" className="inline-flex items-center gap-2 h-10 px-4 bg-primary text-primary-foreground rounded-sm text-sm font-medium hover:opacity-90"><Plus size={16} weight="bold" /> Add User</button></DialogTrigger>
           <DialogContent>
             <DialogHeader><DialogTitle className="font-display">Add Team Member</DialogTitle></DialogHeader>
@@ -259,30 +284,49 @@ function UsersTab({ me }) {
               <F label="Name" testid="invite-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
               <F label="Email" testid="invite-email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
               <F label="Temporary password" testid="invite-password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
-              <Sel label="Role" testid="invite-role" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} options={[{ value: "agent", label: "Agent" }, { value: "admin", label: "Admin" }]} />
+              <Sel label="Role" testid="invite-role" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} options={roles.map((r) => ({ value: r.name, label: r.name }))} />
               <DialogFooter><button data-testid="save-user-button" type="submit" className="h-10 px-4 bg-primary text-primary-foreground rounded-sm text-sm font-medium">Add</button></DialogFooter>
             </form>
           </DialogContent>
-        </Dialog>
+        </Dialog>}
       </div>
       <div className="bg-card border border-border rounded-sm overflow-hidden">
         <table className="w-full text-sm">
           <thead><tr className="text-left text-xs uppercase tracking-wide text-muted-foreground border-b border-border bg-secondary/50"><th className="py-2.5 px-4 font-semibold">Name</th><th className="py-2.5 px-4 font-semibold">Email</th><th className="py-2.5 px-4 font-semibold">Role</th><th className="py-2.5 px-4 font-semibold text-right">Actions</th></tr></thead>
           <tbody>
             {users.map((u) => (
-              <tr key={u.id} className="border-b border-border/60 hover:bg-muted/50">
-                <td className="py-2.5 px-4 font-medium">{u.name}</td>
+              <tr key={u.id} data-testid={`user-row-${u.id}`} className="border-b border-border/60 hover:bg-muted/50">
+                <td className="py-2.5 px-4 font-medium">{u.name}{u.banned && <span className="ml-2 text-[10px] uppercase px-1.5 py-0.5 bg-destructive/15 text-destructive rounded-sm">Banned</span>}</td>
                 <td className="py-2.5 px-4 text-muted-foreground">{u.email}</td>
-                <td className="py-2.5 px-4"><span className={`text-xs px-2 py-0.5 rounded-sm font-semibold capitalize ${u.role === "admin" ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>{u.role}</span></td>
-                <td className="py-2.5 px-4 text-right space-x-2">
-                  <button data-testid={`role-${u.id}`} onClick={() => changeRole(u)} className="text-xs text-primary hover:underline">{u.role === "admin" ? "Make agent" : "Make admin"}</button>
-                  {u.id !== me?.id && <button data-testid={`delete-user-${u.id}`} onClick={() => remove(u.id)} className="text-muted-foreground hover:text-destructive"><Trash size={15} /></button>}
+                <td className="py-2.5 px-4">
+                  {u.id !== me?.id && u.role !== "owner" && can("users", "update") ? (
+                    <select data-testid={`role-select-${u.id}`} value={u.role} onChange={(e) => changeRole(u, e.target.value)} className="h-7 rounded-sm border border-input bg-card px-2 text-xs capitalize">
+                      {roles.map((r) => <option key={r.name} value={r.name}>{r.name}</option>)}
+                    </select>
+                  ) : <span className="text-xs px-2 py-0.5 rounded-sm font-semibold capitalize bg-muted text-muted-foreground">{u.role}</span>}
+                </td>
+                <td className="py-2.5 px-4 text-right space-x-2 whitespace-nowrap">
+                  {canImpersonate && u.id !== me?.id && u.role !== "owner" && !u.banned && <button data-testid={`impersonate-user-${u.id}`} onClick={() => doImpersonate(u)} className="text-xs text-primary hover:underline"><UserSwitch size={13} className="inline" /> Impersonate</button>}
+                  {canBan && u.id !== me?.id && u.role !== "owner" && (u.banned
+                    ? <button data-testid={`unban-user-${u.id}`} onClick={() => unban(u)} className="text-xs text-success hover:underline">Unban</button>
+                    : <button data-testid={`ban-user-${u.id}`} onClick={() => { setBanUser(u); setBanReason(""); }} className="text-xs text-destructive hover:underline"><Prohibit size={13} className="inline" /> Ban</button>)}
+                  {canDelete && u.id !== me?.id && <button data-testid={`delete-user-${u.id}`} onClick={() => remove(u.id)} className="text-muted-foreground hover:text-destructive"><Trash size={15} /></button>}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      <Dialog open={!!banUser} onOpenChange={(o) => !o && setBanUser(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle className="font-display">Ban {banUser?.name}</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Reason (required)</label>
+            <textarea data-testid="ban-reason-input" value={banReason} onChange={(e) => setBanReason(e.target.value)} rows={3} className="w-full rounded-sm border border-input bg-card p-2.5 text-sm" placeholder="Why is this user being banned?" />
+          </div>
+          <DialogFooter><button data-testid="confirm-ban-button" onClick={doBan} className="h-10 px-4 bg-destructive text-destructive-foreground rounded-sm text-sm font-medium">Ban user</button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

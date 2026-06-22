@@ -23,3 +23,5 @@ async def create_indexes():
     await db.dnc_list.create_index([("org_id", 1), ("phone", 1)], unique=True)
     await db.audit_logs.create_index([("org_id", 1), ("created_at", -1)])
     await db.kb_entries.create_index([("org_id", 1), ("created_at", -1)])
+    await db.roles.create_index([("name", 1), ("scope", 1)], unique=True)
+    await db.ai_blueprints.create_index("is_default")

@@ -3,9 +3,12 @@ import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import api, { apiErr } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+import RolesManager from "../components/RolesManager";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import {
   Buildings, Brain, UserSwitch, FloppyDisk, Users, Megaphone, PhoneCall, AddressBook, Crown,
+  Plus, Trash, Star, MagnifyingGlass, ShieldStar,
 } from "@phosphor-icons/react";
 
 export default function PlatformAdmin() {
@@ -19,11 +22,13 @@ export default function PlatformAdmin() {
         <TabsList>
           <TabsTrigger value="businesses" data-testid="admin-tab-businesses"><Buildings size={16} className="mr-1.5" />Businesses</TabsTrigger>
           <TabsTrigger value="users" data-testid="admin-tab-users"><Users size={16} className="mr-1.5" />Users &amp; Impersonation</TabsTrigger>
-          <TabsTrigger value="prompt" data-testid="admin-tab-prompt"><Brain size={16} className="mr-1.5" />Global AI Prompt</TabsTrigger>
+          <TabsTrigger value="blueprints" data-testid="admin-tab-blueprints"><Brain size={16} className="mr-1.5" />AI Blueprints</TabsTrigger>
+          <TabsTrigger value="roles" data-testid="admin-tab-roles"><ShieldStar size={16} className="mr-1.5" />Default Roles</TabsTrigger>
         </TabsList>
         <TabsContent value="businesses" className="mt-4"><BusinessesTab /></TabsContent>
         <TabsContent value="users" className="mt-4"><UsersTab /></TabsContent>
-        <TabsContent value="prompt" className="mt-4"><GlobalPromptTab /></TabsContent>
+        <TabsContent value="blueprints" className="mt-4"><BlueprintsTab /></TabsContent>
+        <TabsContent value="roles" className="mt-4"><RolesManager platformScope /></TabsContent>
       </Tabs>
     </div>
   );
@@ -31,22 +36,46 @@ export default function PlatformAdmin() {
 
 function BusinessesTab() {
   const [orgs, setOrgs] = useState([]);
-  useEffect(() => { api.get("/admin/businesses").then((r) => setOrgs(r.data)).catch((e) => toast.error(apiErr(e))); }, []);
+  const [blueprints, setBlueprints] = useState([]);
+  const [search, setSearch] = useState("");
+  const load = useCallback(async () => {
+    try {
+      const [o, b] = await Promise.all([api.get(`/admin/businesses${search ? `?search=${encodeURIComponent(search)}` : ""}`), api.get("/admin/blueprints")]);
+      setOrgs(o.data); setBlueprints(b.data);
+    } catch (e) { toast.error(apiErr(e)); }
+  }, [search]);
+  useEffect(() => { const t = setTimeout(load, 300); return () => clearTimeout(t); }, [load]);
+
+  const assign = async (oid, bid) => {
+    try { await api.put(`/admin/businesses/${oid}/blueprint`, { blueprint_id: bid || null }); toast.success("Blueprint assigned"); load(); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-      {orgs.map((o) => (
-        <div key={o.id} data-testid={`business-card-${o.id}`} className="bg-card border border-border rounded-sm p-4">
-          <h3 className="font-display font-semibold text-lg">{o.name}</h3>
-          <p className="text-xs text-muted-foreground tnum">Created {(o.created_at || "").slice(0, 10)}</p>
-          <div className="grid grid-cols-2 gap-2 mt-3 text-sm">
-            <Stat icon={Users} label="Users" value={o.users} />
-            <Stat icon={AddressBook} label="Contacts" value={o.contacts} />
-            <Stat icon={Megaphone} label="Campaigns" value={o.campaigns} />
-            <Stat icon={PhoneCall} label="Calls" value={o.calls} />
+    <div className="space-y-3">
+      <SearchBox value={search} onChange={setSearch} placeholder="Search businesses…" testid="business-search" />
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {orgs.map((o) => (
+          <div key={o.id} data-testid={`business-card-${o.id}`} className="bg-card border border-border rounded-sm p-4">
+            <h3 className="font-display font-semibold text-lg">{o.name}</h3>
+            <p className="text-xs text-muted-foreground tnum">Created {(o.created_at || "").slice(0, 10)}</p>
+            <div className="grid grid-cols-2 gap-2 mt-3 text-sm">
+              <Stat icon={Users} label="Users" value={o.users} />
+              <Stat icon={AddressBook} label="Contacts" value={o.contacts} />
+              <Stat icon={Megaphone} label="Campaigns" value={o.campaigns} />
+              <Stat icon={PhoneCall} label="Calls" value={o.calls} />
+            </div>
+            <div className="mt-3">
+              <label className="text-[10px] uppercase tracking-[0.15em] font-semibold text-muted-foreground">AI Blueprint</label>
+              <select data-testid={`assign-blueprint-${o.id}`} value={o.blueprint_id || ""} onChange={(e) => assign(o.id, e.target.value)} className="mt-1 flex h-9 w-full rounded-sm border border-input bg-card px-2 text-sm">
+                <option value="">— None (no global prompt) —</option>
+                {blueprints.map((b) => <option key={b.id} value={b.id}>{b.name}{b.is_default ? " (default)" : ""}</option>)}
+              </select>
+            </div>
           </div>
-        </div>
-      ))}
-      {orgs.length === 0 && <div className="col-span-full py-10 text-center text-sm text-muted-foreground border border-dashed border-border rounded-sm">No businesses yet.</div>}
+        ))}
+        {orgs.length === 0 && <div className="col-span-full py-10 text-center text-sm text-muted-foreground border border-dashed border-border rounded-sm">No businesses match.</div>}
+      </div>
     </div>
   );
 }
@@ -61,58 +90,158 @@ function Stat({ icon: Icon, label, value }) {
   );
 }
 
-function UsersTab() {
-  const { user, impersonate } = useAuth();
-  const navigate = useNavigate();
-  const [users, setUsers] = useState([]);
-  const load = useCallback(async () => { try { const r = await api.get("/admin/users"); setUsers(r.data); } catch (e) { toast.error(apiErr(e)); } }, []);
-  useEffect(() => { load(); }, [load]);
-
-  const doImpersonate = async (u) => {
-    try { await impersonate(u.id); toast.success(`Now impersonating ${u.name}`); navigate("/dashboard"); }
-    catch (e) { toast.error(apiErr(e)); }
-  };
-
+function SearchBox({ value, onChange, placeholder, testid }) {
   return (
-    <div className="bg-card border border-border rounded-sm overflow-hidden">
-      <table className="w-full text-sm">
-        <thead><tr className="text-left text-xs uppercase tracking-wide text-muted-foreground border-b border-border bg-secondary/50">
-          <th className="py-2.5 px-4 font-semibold">Name</th><th className="py-2.5 px-4 font-semibold">Email</th><th className="py-2.5 px-4 font-semibold">Business</th><th className="py-2.5 px-4 font-semibold">Role</th><th className="py-2.5 px-4 font-semibold text-right">Actions</th>
-        </tr></thead>
-        <tbody>
-          {users.map((u) => (
-            <tr key={u.id} data-testid={`admin-user-row-${u.id}`} className="border-b border-border/60 hover:bg-muted/50">
-              <td className="py-2.5 px-4 font-medium">{u.name}</td>
-              <td className="py-2.5 px-4 text-muted-foreground">{u.email}</td>
-              <td className="py-2.5 px-4 text-muted-foreground">{u.org_name}</td>
-              <td className="py-2.5 px-4"><span className={`text-xs px-2 py-0.5 rounded-sm font-semibold capitalize ${u.role === "owner" ? "bg-primary/15 text-primary" : u.role === "admin" ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>{u.role}</span></td>
-              <td className="py-2.5 px-4 text-right">
-                {u.id !== user?.id && u.role !== "owner" && (
-                  <button data-testid={`impersonate-${u.id}`} onClick={() => doImpersonate(u)} className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline font-medium"><UserSwitch size={14} weight="bold" /> Impersonate</button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="relative max-w-sm">
+      <MagnifyingGlass size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+      <input data-testid={testid} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="h-10 w-full pl-9 pr-3 rounded-sm border border-input bg-card text-sm" />
     </div>
   );
 }
 
-function GlobalPromptTab() {
-  const [prompt, setPrompt] = useState("");
-  const [loaded, setLoaded] = useState(false);
-  useEffect(() => { api.get("/admin/global-settings").then((r) => { setPrompt(r.data.ai_system_prompt || ""); setLoaded(true); }).catch((e) => toast.error(apiErr(e))); }, []);
-  const save = async () => { try { await api.put("/admin/global-settings", { ai_system_prompt: prompt }); toast.success("Global AI prompt saved"); } catch (e) { toast.error(apiErr(e)); } };
-  if (!loaded) return <div className="text-sm text-muted-foreground">Loading…</div>;
+function UsersTab() {
+  const { user, impersonate } = useAuth();
+  const navigate = useNavigate();
+  const [users, setUsers] = useState([]);
+  const [orgs, setOrgs] = useState([]);
+  const [filters, setFilters] = useState({ search: "", role: "", org_id: "" });
+  const [roleDlg, setRoleDlg] = useState(false);
+  const [rolePreview, setRolePreview] = useState({ org_id: "", role: "agent" });
+
+  const load = useCallback(async () => {
+    try {
+      const params = Object.fromEntries(Object.entries(filters).filter(([, v]) => v));
+      const [u, b] = await Promise.all([api.get("/admin/users", { params }), api.get("/admin/businesses")]);
+      setUsers(u.data); setOrgs(b.data);
+    } catch (e) { toast.error(apiErr(e)); }
+  }, [filters]);
+  useEffect(() => { const t = setTimeout(load, 300); return () => clearTimeout(t); }, [load]);
+
+  const doImpersonateUser = async (u) => {
+    try { await impersonate(u.id); toast.success(`Now impersonating ${u.name}`); navigate("/dashboard"); }
+    catch (e) { toast.error(apiErr(e)); }
+  };
+  const doImpersonateRole = async () => {
+    try {
+      await impersonate(null, rolePreview);
+      toast.success(`Previewing the ${rolePreview.role} role`); navigate("/dashboard");
+    } catch (e) { toast.error(apiErr(e)); }
+  };
+  const roleOptions = [...new Set(users.map((u) => u.role))].filter((r) => r !== "owner");
+
   return (
-    <div className="bg-card border border-border rounded-sm p-5 space-y-3 max-w-3xl">
-      <div className="flex items-center gap-2 font-display font-semibold"><Brain size={18} weight="bold" className="text-primary" /> Global AI system prompt</div>
-      <p className="text-sm text-muted-foreground">This instruction is <b>prepended</b> to every AI interaction across all businesses (scripts, live calls, analysis). Each business can extend it with their own prompt in Settings → Organisation.</p>
-      <textarea data-testid="global-prompt-input" value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={10}
-        placeholder="e.g. Always be polite, never make medical or financial guarantees, and respect UK cold-calling and GDPR rules."
-        className="w-full rounded-sm border border-input bg-card p-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-      <button data-testid="save-global-prompt-button" onClick={save} className="inline-flex items-center gap-2 h-10 px-5 bg-primary text-primary-foreground rounded-sm text-sm font-medium hover:opacity-90"><FloppyDisk size={16} weight="bold" /> Save Global Prompt</button>
+    <div className="space-y-3">
+      <div className="flex items-end gap-2 flex-wrap">
+        <SearchBox value={filters.search} onChange={(v) => setFilters({ ...filters, search: v })} placeholder="Search name or email…" testid="user-search" />
+        <select data-testid="user-filter-role" value={filters.role} onChange={(e) => setFilters({ ...filters, role: e.target.value })} className="h-10 px-3 rounded-sm border border-input bg-card text-sm capitalize">
+          <option value="">All roles</option>
+          {[...new Set(["owner", "admin", "agent", ...roleOptions])].map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+        <select data-testid="user-filter-business" value={filters.org_id} onChange={(e) => setFilters({ ...filters, org_id: e.target.value })} className="h-10 px-3 rounded-sm border border-input bg-card text-sm">
+          <option value="">All businesses</option>
+          {orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+        </select>
+        <Dialog open={roleDlg} onOpenChange={setRoleDlg}>
+          <DialogTrigger asChild><button data-testid="impersonate-role-button" className="ml-auto inline-flex items-center gap-1.5 h-10 px-4 border border-border rounded-sm text-sm font-medium hover:bg-accent"><UserSwitch size={15} weight="bold" /> Preview a role</button></DialogTrigger>
+          <DialogContent>
+            <DialogHeader><DialogTitle className="font-display">Preview as a role</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Business</label>
+                <select data-testid="preview-role-business" value={rolePreview.org_id} onChange={(e) => setRolePreview({ ...rolePreview, org_id: e.target.value })} className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm">
+                  <option value="">— select business —</option>
+                  {orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Role</label>
+                <input data-testid="preview-role-name" value={rolePreview.role} onChange={(e) => setRolePreview({ ...rolePreview, role: e.target.value })} placeholder="agent, admin, or a custom role name" className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm" />
+              </div>
+            </div>
+            <DialogFooter><button data-testid="start-role-preview" onClick={doImpersonateRole} disabled={!rolePreview.org_id || !rolePreview.role} className="h-10 px-4 bg-primary text-primary-foreground rounded-sm text-sm font-medium disabled:opacity-50">Start preview</button></DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      <div className="bg-card border border-border rounded-sm overflow-hidden">
+        <table className="w-full text-sm">
+          <thead><tr className="text-left text-xs uppercase tracking-wide text-muted-foreground border-b border-border bg-secondary/50">
+            <th className="py-2.5 px-4 font-semibold">Name</th><th className="py-2.5 px-4 font-semibold">Email</th><th className="py-2.5 px-4 font-semibold">Business</th><th className="py-2.5 px-4 font-semibold">Role</th><th className="py-2.5 px-4 font-semibold text-right">Actions</th>
+          </tr></thead>
+          <tbody>
+            {users.map((u) => (
+              <tr key={u.id} data-testid={`admin-user-row-${u.id}`} className="border-b border-border/60 hover:bg-muted/50">
+                <td className="py-2.5 px-4 font-medium">{u.name}{u.banned && <span className="ml-2 text-[10px] uppercase px-1.5 py-0.5 bg-destructive/15 text-destructive rounded-sm">Banned</span>}</td>
+                <td className="py-2.5 px-4 text-muted-foreground">{u.email}</td>
+                <td className="py-2.5 px-4 text-muted-foreground">{u.org_name}</td>
+                <td className="py-2.5 px-4"><span className={`text-xs px-2 py-0.5 rounded-sm font-semibold capitalize ${u.role === "owner" ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}>{u.role}</span></td>
+                <td className="py-2.5 px-4 text-right">
+                  {u.id !== user?.id && u.role !== "owner" && !u.banned && (
+                    <button data-testid={`impersonate-${u.id}`} onClick={() => doImpersonateUser(u)} className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline font-medium"><UserSwitch size={14} weight="bold" /> Impersonate</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function BlueprintsTab() {
+  const [items, setItems] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ id: null, name: "", prompt: "", is_default: false });
+  const load = useCallback(async () => { try { const r = await api.get("/admin/blueprints"); setItems(r.data); } catch (e) { toast.error(apiErr(e)); } }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const save = async () => {
+    if (!form.name.trim()) { toast.error("Name required"); return; }
+    try {
+      if (form.id) await api.put(`/admin/blueprints/${form.id}`, { name: form.name, prompt: form.prompt, is_default: form.is_default || undefined });
+      else await api.post("/admin/blueprints", { name: form.name, prompt: form.prompt, is_default: form.is_default });
+      toast.success("Blueprint saved"); setOpen(false); setForm({ id: null, name: "", prompt: "", is_default: false }); load();
+    } catch (e) { toast.error(apiErr(e)); }
+  };
+  const setDefault = async (b) => { try { await api.put(`/admin/blueprints/${b.id}`, { is_default: true }); toast.success(`${b.name} is now the default`); load(); } catch (e) { toast.error(apiErr(e)); } };
+  const remove = async (b) => { try { await api.delete(`/admin/blueprints/${b.id}`); toast.success("Deleted"); load(); } catch (e) { toast.error(apiErr(e)); } };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">AI Blueprints are reusable system prompts assigned to businesses. The default is auto-applied when a new company joins.</p>
+        <button data-testid="new-blueprint-button" onClick={() => { setForm({ id: null, name: "", prompt: "", is_default: false }); setOpen(true); }} className="inline-flex items-center gap-2 h-9 px-3 bg-primary text-primary-foreground rounded-sm text-sm font-medium hover:opacity-90"><Plus size={15} weight="bold" /> New Blueprint</button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {items.map((b) => (
+          <div key={b.id} data-testid={`blueprint-card-${b.id}`} className="bg-card border border-border rounded-sm p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2"><Brain size={17} weight="bold" className="text-primary" /><span className="font-display font-semibold">{b.name}</span>{b.is_default && <span className="text-[10px] uppercase px-1.5 py-0.5 bg-primary/15 text-primary rounded-sm inline-flex items-center gap-1"><Star size={10} weight="fill" />Default</span>}</div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2 line-clamp-3">{b.prompt}</p>
+            <div className="flex gap-2 mt-3">
+              <button data-testid={`edit-blueprint-${b.id}`} onClick={() => { setForm({ id: b.id, name: b.name, prompt: b.prompt, is_default: b.is_default }); setOpen(true); }} className="flex-1 h-8 rounded-sm border border-border text-sm font-medium hover:bg-accent">Edit</button>
+              {!b.is_default && <button data-testid={`default-blueprint-${b.id}`} onClick={() => setDefault(b)} className="h-8 px-2.5 rounded-sm border border-border text-sm hover:bg-accent">Set default</button>}
+              {!b.is_default && <button data-testid={`delete-blueprint-${b.id}`} onClick={() => remove(b)} className="h-8 px-2.5 rounded-sm border border-border text-muted-foreground hover:text-destructive hover:bg-accent"><Trash size={15} /></button>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader><DialogTitle className="font-display">{form.id ? "Edit blueprint" : "New blueprint"}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div><label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Name</label>
+              <input data-testid="blueprint-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm" /></div>
+            <div><label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Prompt</label>
+              <textarea data-testid="blueprint-prompt" value={form.prompt} onChange={(e) => setForm({ ...form, prompt: e.target.value })} rows={8} className="mt-1 w-full rounded-sm border border-input bg-card p-3 text-sm" /></div>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" data-testid="blueprint-default" checked={form.is_default} onChange={(e) => setForm({ ...form, is_default: e.target.checked })} className="h-4 w-4" /> Set as default for new businesses</label>
+          </div>
+          <DialogFooter><button data-testid="save-blueprint-button" onClick={save} className="h-10 px-4 bg-primary text-primary-foreground rounded-sm text-sm font-medium"><FloppyDisk size={15} className="inline mr-1.5" />Save</button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -11,13 +11,14 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from database import db, create_indexes
-from auth import auth_router, seed_admin, seed_owner, get_current_user, require_admin, require_owner
+from auth import auth_router, seed_admin, seed_owner, get_current_user, require_admin, require_owner, user_can, user_has_cap
 from routes import router as app_router
 from models import now_utc, new_id
 from audit import audit_context_middleware, record_audit, build_audit_router
 from messaging import build_messaging_router, build_whatsapp_webhook_router, create_messaging_indexes
 from kb import build_kb_router
-from admin import build_admin_router
+from admin import build_admin_router, seed_blueprints
+from rbac import build_rbac_router
 from email_campaigns import build_email_router, email_scheduler_loop
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -72,6 +73,7 @@ app.include_router(build_messaging_router(get_current_user, record_audit))
 app.include_router(build_whatsapp_webhook_router())
 app.include_router(build_kb_router(get_current_user, record_audit))
 app.include_router(build_admin_router(get_current_user, require_owner, record_audit))
+app.include_router(build_rbac_router(get_current_user, user_can, user_has_cap, record_audit))
 app.include_router(build_email_router(get_current_user, require_admin, record_audit))
 
 app.add_middleware(
@@ -138,6 +140,7 @@ async def seed_demo_data():
 async def startup():
     await create_indexes()
     await create_messaging_indexes()
+    await seed_blueprints()
     await seed_admin()
     await seed_owner()
     await seed_demo_data()

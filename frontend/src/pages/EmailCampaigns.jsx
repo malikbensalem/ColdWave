@@ -15,8 +15,8 @@ const AUDIENCES = [
 ];
 
 export default function EmailCampaigns() {
-  const { user } = useAuth();
-  const isAdmin = user?.role === "admin" || user?.role === "owner";
+  const { can } = useAuth();
+  const isAdmin = can("email_campaigns", "create");
   const [integration, setIntegration] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
 

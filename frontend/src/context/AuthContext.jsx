@@ -46,8 +46,9 @@ export function AuthProvider({ children }) {
     setUser(data);
   };
 
-  const impersonate = async (userId) => {
-    const { data } = await api.post("/auth/impersonate", { user_id: userId });
+  const impersonate = async (userId, rolePreview) => {
+    const body = userId ? { user_id: userId } : { role: rolePreview.role, org_id: rolePreview.org_id };
+    const { data } = await api.post("/auth/impersonate", body);
     if (data.access_token) setToken(data.access_token);
     setUser(data);
     return data;
@@ -67,8 +68,11 @@ export function AuthProvider({ children }) {
     window.location.href = "/login";
   };
 
+  const can = (system, action = "read") => !!(user && user.permissions && user.permissions[system] && user.permissions[system][action]);
+  const hasCap = (cap) => !!(user && Array.isArray(user.capabilities) && user.capabilities.includes(cap));
+
   return (
-    <AuthContext.Provider value={{ user, setUser, applyAuth, loading, login, register, logout, checkAuth, impersonate, stopImpersonation, apiErr }}>
+    <AuthContext.Provider value={{ user, setUser, applyAuth, loading, login, register, logout, checkAuth, impersonate, stopImpersonation, can, hasCap, apiErr }}>
       {children}
     </AuthContext.Provider>
   );

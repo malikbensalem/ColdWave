@@ -9,8 +9,18 @@ where python >nul 2>&1 || (echo [error] Python 3.11+ not found. Install from htt
 where node   >nul 2>&1 || (echo [error] Node 18+ not found. Install from https://nodejs.org and re-run. & pause & exit /b 1)
 where yarn   >nul 2>&1 || (echo [error] yarn not found. Run: npm install -g yarn & pause & exit /b 1)
 
-if not exist "backend\.env"  (echo [error] Missing backend\.env. Copy backend\.env.example to backend\.env and fill it in. & pause & exit /b 1)
-if not exist "frontend\.env" (echo [error] Missing frontend\.env. Copy frontend\.env.example to frontend\.env and fill it in. & pause & exit /b 1)
+REM --- First-run setup: create .env files from templates if missing ---
+if not exist "backend\.env" (
+  echo [coldwave] First run: creating backend\.env from template...
+  copy /y "backend\.env.example" "backend\.env" >nul
+  for /f %%h in ('python -c "import secrets;print(secrets.token_hex(32))"') do set "JWTSECRET=%%h"
+  python -c "import re,io;p='backend\\.env';s=open(p).read();s=re.sub(r'JWT_SECRET=.*','JWT_SECRET=\"%JWTSECRET%\"',s);open(p,'w').write(s)"
+  echo [coldwave] Generated a secure JWT secret. NOTE: set EMERGENT_LLM_KEY in backend\.env for AI features.
+)
+if not exist "frontend\.env" (
+  echo [coldwave] First run: creating frontend\.env from template...
+  copy /y "frontend\.env.example" "frontend\.env" >nul
+)
 
 echo [coldwave] Checking MongoDB reachability...
 for /f "usebackq tokens=1,* delims==" %%a in ("backend\.env") do (
@@ -26,6 +36,8 @@ if not exist "frontend\node_modules" (
 echo [coldwave] Ensuring backend dependencies...
 python -m pip install -q -r backend\requirements.txt
 
+echo [coldwave] Database will be auto-initialised on backend startup
+echo           (seeds owner, admin, default AI blueprint and demo data).
 echo.
 echo ========================================
 echo   ColdWave starting

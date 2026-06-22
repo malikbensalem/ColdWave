@@ -3,13 +3,13 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query
 from database import db
-from auth import get_current_user, require_admin, hash_password
+from auth import get_current_user, require_admin, hash_password, require_perm, require_cap, user_can
 from models import (
     ContactCreate, ContactUpdate, ScriptCreate, ScriptUpdate, GenerateScriptRequest,
     CampaignCreate, CampaignUpdate, VoicePreviewRequest, TestCallStartRequest,
     TestCallTurnRequest, DNCAddRequest, ErasureRequest, OrgUpdateRequest,
     IntegrationSettings, InviteUserRequest, UpdateUserRequest, ElevenLabsTestRequest,
-    LLMTestRequest, VoiceCharacteristicsUpdate, now_utc, new_id,
+    LLMTestRequest, VoiceCharacteristicsUpdate, BanRequest, now_utc, new_id,
 )
 from integrations import (
     VOICE_CATALOG, get_voice, generate_voice_preview, generate_script,
@@ -38,13 +38,15 @@ def clean(doc: dict) -> dict:
 
 
 async def attach_system_prefix(org: dict) -> dict:
-    """Resolve the effective AI system prefix (global owner prompt + org extension)."""
+    """Resolve the effective AI system prefix (assigned blueprint + org extension)."""
     if not org:
         return org
-    settings = await db.platform_settings.find_one({"id": "platform"}, {"_id": 0})
-    global_p = (settings or {}).get("ai_system_prompt", "")
+    bp_prompt = ""
+    if org.get("blueprint_id"):
+        bp = await db.ai_blueprints.find_one({"id": org["blueprint_id"]}, {"_id": 0})
+        bp_prompt = (bp or {}).get("prompt", "")
     org_p = org.get("ai_system_prompt", "")
-    parts = [p for p in [global_p, org_p] if p]
+    parts = [p for p in [bp_prompt, org_p] if p]
     return {**org, "_system_prefix": "\n\n".join(parts)} if parts else org
 
 
@@ -585,20 +587,22 @@ async def test_tcx(user: dict = Depends(require_admin)):
 
 # ---------------- User Management ----------------
 @router.get("/users")
-async def list_users(user: dict = Depends(require_admin)):
+async def list_users(user: dict = Depends(require_perm("users", "read"))):
     users = await db.users.find({"org_id": user["org_id"]}, {"_id": 0, "password_hash": 0}).to_list(500)
     return users
 
 
 @router.post("/users")
-async def invite_user(req: InviteUserRequest, user: dict = Depends(require_admin)):
+async def invite_user(req: InviteUserRequest, user: dict = Depends(require_perm("users", "create"))):
     email = req.email.lower()
     if await db.users.find_one({"email": email}):
         raise HTTPException(400, "Email already exists")
+    if req.role == "owner":
+        raise HTTPException(400, "Cannot assign the owner role.")
     doc = {
         "id": new_id("user"), "org_id": user["org_id"], "email": email, "name": req.name,
         "password_hash": hash_password(req.password), "role": req.role,
-        "auth_provider": "password", "picture": "", "created_at": now_utc().isoformat(),
+        "auth_provider": "password", "picture": "", "banned": False, "created_at": now_utc().isoformat(),
     }
     await db.users.insert_one(dict(doc))
     await audit(user["org_id"], user, "user_invite", email)
@@ -607,14 +611,40 @@ async def invite_user(req: InviteUserRequest, user: dict = Depends(require_admin
 
 
 @router.put("/users/{user_id}")
-async def update_user(user_id: str, req: UpdateUserRequest, user: dict = Depends(require_admin)):
+async def update_user(user_id: str, req: UpdateUserRequest, user: dict = Depends(require_perm("users", "update"))):
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    if updates.get("role") == "owner":
+        raise HTTPException(400, "Cannot assign the owner role.")
     await db.users.update_one({"id": user_id, "org_id": user["org_id"]}, {"$set": updates})
     return await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
 
 
+@router.post("/users/{user_id}/ban")
+async def ban_user(user_id: str, req: BanRequest, user: dict = Depends(require_cap("ban_users"))):
+    if user_id == user["id"]:
+        raise HTTPException(400, "You cannot ban yourself")
+    target = await db.users.find_one({"id": user_id, "org_id": user["org_id"]}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "User not found")
+    if target.get("role") == "owner":
+        raise HTTPException(400, "The owner cannot be banned.")
+    await db.users.update_one({"id": user_id, "org_id": user["org_id"]}, {"$set": {
+        "banned": True, "ban_reason": req.reason, "banned_by": user["email"], "banned_at": now_utc().isoformat(),
+    }})
+    await audit(user["org_id"], user, "user_ban", req.reason, entity="user", entity_id=user_id)
+    return {"ok": True}
+
+
+@router.post("/users/{user_id}/unban")
+async def unban_user(user_id: str, user: dict = Depends(require_cap("ban_users"))):
+    await db.users.update_one({"id": user_id, "org_id": user["org_id"]},
+                              {"$set": {"banned": False}, "$unset": {"ban_reason": "", "banned_by": "", "banned_at": ""}})
+    await audit(user["org_id"], user, "user_unban", "", entity="user", entity_id=user_id)
+    return {"ok": True}
+
+
 @router.delete("/users/{user_id}")
-async def delete_user(user_id: str, user: dict = Depends(require_admin)):
+async def delete_user(user_id: str, user: dict = Depends(require_perm("users", "delete"))):
     if user_id == user["id"]:
         raise HTTPException(400, "You cannot remove yourself")
     await db.users.delete_one({"id": user_id, "org_id": user["org_id"]})
@@ -623,5 +653,5 @@ async def delete_user(user_id: str, user: dict = Depends(require_admin)):
 
 
 @router.get("/audit")
-async def list_audit(user: dict = Depends(require_admin)):
+async def list_audit(user: dict = Depends(require_perm("audit", "read"))):
     return await db.audit_logs.find({"org_id": user["org_id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)

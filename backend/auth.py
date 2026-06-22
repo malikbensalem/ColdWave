@@ -8,6 +8,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, Response, HTTPException, Depends
 from database import db
 from models import RegisterRequest, LoginRequest, ImpersonateRequest, now_utc, new_id
+from permissions import resolve_permissions, resolve_role
 
 JWT_ALGORITHM = "HS256"
 ACCESS_MIN = 60 * 24  # 1 day
@@ -32,7 +33,7 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(user_id: str, email: str, impersonator: dict = None) -> str:
+def create_access_token(user_id: str, email: str, impersonator: dict = None, imp_role: dict = None) -> str:
     payload = {
         "sub": user_id,
         "email": email,
@@ -41,6 +42,8 @@ def create_access_token(user_id: str, email: str, impersonator: dict = None) -> 
     }
     if impersonator:
         payload["imp"] = impersonator
+    if imp_role:
+        payload["imp_role"] = imp_role
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
@@ -53,6 +56,7 @@ def set_auth_cookie(response: Response, name: str, value: str, max_age: int):
 
 async def _public_user(user: dict) -> dict:
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    perms = await resolve_permissions(db, user)
     return {
         "id": user["id"],
         "email": user["email"],
@@ -62,8 +66,11 @@ async def _public_user(user: dict) -> dict:
         "org_name": org["name"] if org else "",
         "auth_provider": user.get("auth_provider", "password"),
         "picture": user.get("picture", ""),
+        "permissions": perms["permissions"],
+        "capabilities": perms["capabilities"],
         "impersonating": bool(user.get("_impersonator")),
         "impersonator": user.get("_impersonator") or None,
+        "preview_role": bool(user.get("_preview")),
     }
 
 
@@ -102,9 +109,20 @@ async def get_current_user(request: Request) -> dict:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Invalid token type")
+        # Role-preview impersonation: synthetic identity, no DB user.
+        if payload.get("imp_role"):
+            ir = payload["imp_role"]
+            return {
+                "id": f"preview_{ir['role']}", "org_id": ir["org_id"],
+                "email": f"{ir['role']}@preview.local", "name": f"{ir['role']} (preview)",
+                "role": ir["role"], "auth_provider": "preview",
+                "_impersonator": payload.get("imp"), "_preview": True,
+            }
         user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        if user.get("banned"):
+            raise HTTPException(status_code=403, detail=f"Account banned: {user.get('ban_reason', 'no reason provided')}")
         if payload.get("imp"):
             user["_impersonator"] = payload["imp"]
         return user
@@ -121,17 +139,44 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
 
 
 async def require_owner(user: dict = Depends(get_current_user)) -> dict:
-    # The real actor must be an owner (impersonation does not grant owner powers).
-    real_role = user.get("_impersonator", {}).get("role") if user.get("_impersonator") else user.get("role")
-    if real_role != "owner":
+    # Platform owner only, and not while impersonating/previewing.
+    if user.get("role") != "owner" or user.get("_impersonator"):
         raise HTTPException(status_code=403, detail="Platform owner access required")
     return user
 
 
+async def user_can(user: dict, system: str, action: str = "read") -> bool:
+    perms = await resolve_permissions(db, user)
+    return bool(perms["permissions"].get(system, {}).get(action, False))
+
+
+async def user_has_cap(user: dict, capability: str) -> bool:
+    perms = await resolve_permissions(db, user)
+    return capability in perms["capabilities"]
+
+
+def require_perm(system: str, action: str = "read"):
+    async def _dep(user: dict = Depends(get_current_user)) -> dict:
+        if not await user_can(user, system, action):
+            raise HTTPException(status_code=403, detail=f"You don't have permission to {action} {system}.")
+        return user
+    return _dep
+
+
+def require_cap(capability: str):
+    async def _dep(user: dict = Depends(get_current_user)) -> dict:
+        if not await user_has_cap(user, capability):
+            raise HTTPException(status_code=403, detail="You don't have permission for this action.")
+        return user
+    return _dep
+
+
 async def _create_org(name: str) -> dict:
+    default_bp = await db.ai_blueprints.find_one({"is_default": True}, {"_id": 0})
     org = {
         "id": new_id("org"),
         "name": name,
+        "blueprint_id": default_bp["id"] if default_bp else None,
         "calling_hours_start": "08:00",
         "calling_hours_end": "20:00",
         "calling_days": ["mon", "tue", "wed", "thu", "fri"],
@@ -197,6 +242,8 @@ async def login(req: LoginRequest, request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     await db.login_attempts.delete_one({"identifier": identifier})
+    if user.get("banned"):
+        raise HTTPException(status_code=403, detail=f"Account banned: {user.get('ban_reason', 'no reason provided')}")
     token = create_access_token(user["id"], email)
     set_auth_cookie(response, "access_token", token, ACCESS_MIN * 60)
     out = await _public_user(user)
@@ -266,21 +313,41 @@ async def logout(request: Request, response: Response):
 async def impersonate(req: ImpersonateRequest, response: Response, user: dict = Depends(get_current_user)):
     if user.get("_impersonator"):
         raise HTTPException(status_code=400, detail="Already impersonating. Stop impersonation first.")
+    is_owner = user.get("role") == "owner"
+    if not is_owner and not await user_has_cap(user, "impersonate_users"):
+        raise HTTPException(status_code=403, detail="You do not have permission to impersonate.")
+    imp = {"id": user["id"], "email": user["email"], "role": user.get("role"),
+           "org_id": user["org_id"], "name": user.get("name", "")}
+
+    # Role-preview impersonation (no specific user).
+    if req.role and not req.user_id:
+        org_id = req.org_id or user["org_id"]
+        if not is_owner and org_id != user["org_id"]:
+            raise HTTPException(status_code=403, detail="You can only preview roles within your own business.")
+        if req.role == "owner":
+            raise HTTPException(status_code=403, detail="The owner role cannot be impersonated.")
+        token = create_access_token(f"preview_{req.role}", f"{req.role}@preview.local",
+                                    impersonator=imp, imp_role={"role": req.role, "org_id": org_id})
+        set_auth_cookie(response, "access_token", token, ACCESS_MIN * 60)
+        response.delete_cookie("session_token", path="/")
+        synthetic = {"id": f"preview_{req.role}", "org_id": org_id, "email": f"{req.role}@preview.local",
+                     "name": f"{req.role} (preview)", "role": req.role, "_impersonator": imp, "_preview": True}
+        out = await _public_user(synthetic)
+        out["access_token"] = token
+        return out
+
+    # Specific-user impersonation.
     target = await db.users.find_one({"id": req.user_id}, {"_id": 0})
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
     if target["id"] == user["id"]:
         raise HTTPException(status_code=400, detail="You cannot impersonate yourself")
-    role = user.get("role")
-    if role == "owner":
-        pass
-    elif role == "admin":
-        if target.get("org_id") != user.get("org_id") or target.get("role") == "owner":
-            raise HTTPException(status_code=403, detail="You can only impersonate users within your business.")
-    else:
-        raise HTTPException(status_code=403, detail="You do not have permission to impersonate users.")
-    imp = {"id": user["id"], "email": user["email"], "role": role,
-           "org_id": user["org_id"], "name": user.get("name", "")}
+    if target.get("banned"):
+        raise HTTPException(status_code=400, detail="Cannot impersonate a banned user.")
+    if target.get("role") == "owner":
+        raise HTTPException(status_code=403, detail="The owner cannot be impersonated.")
+    if not is_owner and target.get("org_id") != user.get("org_id"):
+        raise HTTPException(status_code=403, detail="You can only impersonate users within your business.")
     token = create_access_token(target["id"], target["email"], impersonator=imp)
     set_auth_cookie(response, "access_token", token, ACCESS_MIN * 60)
     response.delete_cookie("session_token", path="/")

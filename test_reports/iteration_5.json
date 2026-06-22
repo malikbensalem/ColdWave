@@ -1,0 +1,53 @@
+{
+  "summary": "Backend RBAC/Impersonation/Blueprints/Ban: 20/21 pytest passing. One critical 500 on PUT /api/roles/{id} due to audit.py type mismatch. Frontend smoke: owner Platform Admin nav and 4 tabs render; testids for Users tab role-preview live inside the 'Preview a role' dialog (open via impersonate-role-button) — present. Impersonation click triggered but the impersonation-banner did not render in my single click attempt (needs main-agent verification — see action items).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "PUT /api/roles/{role_id}", "issue": "Returns 500. /app/backend/rbac.py:90 calls record_audit(..., after=list(updates.keys())) but /app/backend/audit.py _diff calls before.keys()/after.keys(), so a list crashes with AttributeError: 'list' object has no attribute 'keys'. Use a dict (e.g. after={k: True for k in updates.keys()} or omit the diff).", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "PlatformAdmin / AuthContext", "issue": "After clicking impersonate-<userId> as owner, automation observed impersonation-banner=false and nav-admin still visible on the next page. Possible UX/timing issue with state update after impersonate() — could be flaky in the test, but worth verifying manually. Settings tabs were unaffected (still showed all 7 admin tabs).", "selector": "[data-testid^=\"impersonate-\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_passing": [
+    "Login page shows BOTH demo-owner-hint and demo-admin-hint",
+    "Owner: nav-admin visible; admin-tab-businesses/users/blueprints/roles all render; business-search, user-search, user-filter-role, user-filter-business present",
+    "Preview-a-role dialog (impersonate-role-button) contains preview-role-business, preview-role-name, start-role-preview",
+    "new-blueprint-button and roles-manager + new-role-button visible to owner",
+    "Backend: /api/systems returns systems+capabilities including platform_admin/blueprints/view_all_businesses",
+    "/api/auth/me: owner has platform_admin.read=true + view_all_businesses+impersonate_any_business; admin has grant_privileges/impersonate_users/ban_users and platform_admin.read=false",
+    "Role list: owner sees built-in owner role, admin does not",
+    "POST/PUT/DELETE /api/roles capability filtering: admin cannot grant view_all_businesses (filtered server-side)",
+    "Reserved role names (admin/agent/owner) rejected with 400",
+    "Delete role still assigned to user returns 400",
+    "Ban: ban→login=403 with reason; unban→login=200; cannot ban self/owner",
+    "Impersonation: owner→admin cross-org works; admin→cross-org=403; owner cannot be impersonated; banned user cannot be impersonated; role-preview (agent) returns preview_role=true with platform_admin.read=false and integrations.read=false; /api/admin/* returns 403 while impersonating/previewing; stop-impersonation restores owner; owner role preview blocked",
+    "Blueprints: non-owner=403 on /api/admin/*; CRUD works; switching is_default moves default; deleting default returns 400; assigning/clearing blueprint to a business works",
+    "Filters: /api/admin/businesses?search and /api/admin/users?role=&search= filter correctly"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration5_rbac.py",
+    "/app/test_reports/pytest/iter5_rbac.xml"
+  ],
+  "action_items": [
+    "FIX BACKEND: /app/backend/rbac.py update_role -> pass a dict (or remove 'after') to record_audit. Example: await record_audit(..., after={k: True for k in updates.keys()}). Alternatively make audit._diff tolerant of non-dict inputs.",
+    "VERIFY FRONTEND impersonate-<userId>: after click, ensure impersonation-banner renders and nav-admin hides. Backend impersonate API works correctly; suspect either a race with checkAuth re-running or stale user state in AuthContext. Manually log in as owner, impersonate admin@coldwave.ai and confirm banner + nav gating."
+  ],
+  "critical_code_review_comments": [
+    "rbac.update_role passes list to audit's diff layer — type contract bug.",
+    "permissions.py exposes _normalise (private name) imported from rbac.py — fine but consider promoting to public API.",
+    "PlatformAdmin.jsx UsersTab does not gate impersonate buttons by hasCap('impersonate_users') — only by role!='owner'. Currently fine because Platform Admin page itself requires owner, but worth aligning with Settings UsersTab gating for consistency."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "95%", "frontend": "85%"},
+  "test_credentials": "Owner: owner@coldwave.ai / Owner123! ; Admin: admin@coldwave.ai / Admin123!",
+  "seed_data_creation": "Test created/deleted TEST_role_*, TEST_inuse_*, TEST_BP*, and transient test users (cleaned up).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend RBAC test suite at /app/backend/tests/test_iteration5_rbac.py covers all iter-5 paths. Re-run after rbac.update_role audit fix. For frontend impersonation, manually click Impersonate next to admin@coldwave.ai from owner's Platform Admin → Users tab and verify impersonation-banner + hidden nav-admin. The preview-role dialog (impersonate-role-button → preview-role-business/preview-role-name → start-role-preview) is hidden inside a Dialog component as expected.",
+  "rca of the issue": "PUT /api/roles/{role_id} 500: rbac.py:90 passes after=list(updates.keys()); audit.py:42 _diff does set(before.keys()) | set(after.keys()), which fails on list. Reproduce: as admin login, POST /api/roles to create role, then PUT /api/roles/<id> with {permissions: {...}} -> 500. Fix: change to a dict (e.g. {k: True for k in updates.keys()}) or make _diff tolerant: if not isinstance(after, dict): after = {} (and similar for before)."
+}

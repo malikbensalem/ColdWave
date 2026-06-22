@@ -28,13 +28,46 @@ class LoginRequest(BaseModel):
 class InviteUserRequest(BaseModel):
     email: EmailStr
     name: str
-    role: Literal["admin", "agent"] = "agent"
+    role: str = "agent"
     password: str
 
 
 class UpdateUserRequest(BaseModel):
-    role: Optional[Literal["admin", "agent"]] = None
+    role: Optional[str] = None
     name: Optional[str] = None
+
+
+class BanRequest(BaseModel):
+    reason: str
+
+
+class RoleCreate(BaseModel):
+    name: str
+    permissions: dict = {}
+    capabilities: List[str] = []
+    scope: Optional[str] = None  # 'platform' (owner) or a business org_id; default = own org
+
+
+class RoleUpdate(BaseModel):
+    name: Optional[str] = None
+    permissions: Optional[dict] = None
+    capabilities: Optional[List[str]] = None
+
+
+class BlueprintCreate(BaseModel):
+    name: str
+    prompt: str = ""
+    is_default: bool = False
+
+
+class BlueprintUpdate(BaseModel):
+    name: Optional[str] = None
+    prompt: Optional[str] = None
+    is_default: Optional[bool] = None
+
+
+class AssignBlueprintRequest(BaseModel):
+    blueprint_id: Optional[str] = None
 
 
 # ---------- Org / Settings ----------
@@ -190,7 +223,9 @@ class VoiceCharacteristicsUpdate(BaseModel):
 
 # ---------- Impersonation ----------
 class ImpersonateRequest(BaseModel):
-    user_id: str
+    user_id: Optional[str] = None
+    role: Optional[str] = None
+    org_id: Optional[str] = None
 
 
 # ---------- Global platform settings (owner) ----------
