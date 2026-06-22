@@ -64,6 +64,18 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - **Settings UX**: ElevenLabs + LLM keys auto-validate (debounced) on paste; ElevenLabs auto-enables on valid key; hid stability/similarity/style; model is now a dropdown (`GET /api/elevenlabs/models`). KB documents now have View/Edit (`PUT /api/kb/{id}`); removed Opening Line Mode section.
 - Testing: backend 15/15 iteration_4 suite PASS; frontend flows verified. Email = MOCK, WhatsApp = MOCK.
 
+## Iteration 5 (2026-06-22) — Full RBAC, impersonation v2, AI Blueprints, banning
+- **RBAC engine** (`permissions.py`): governable systems (dashboard, leads, campaigns, scripts, voices, email_campaigns, test_calls, whatsapp, compliance, integrations, users, roles, audit, platform_admin, blueprints) with CRUD-per-system + capability flags (view_all_businesses, impersonate_users, manage_blueprints, ban_users, grant_privileges). Built-in owner/admin/agent + custom roles. `/auth/me` returns `permissions` + `capabilities`.
+- **Custom roles** (`rbac.py`): owner creates platform-wide default roles (apply to every business); admins create roles for their own business and can only grant capabilities they hold. Endpoints `/api/roles` CRUD + `/api/systems`. UI: shared `RolesManager` (Settings → Roles & Access; Platform Admin → Default Roles). Permission dependency factories `require_perm` / `require_cap`.
+- **UI gating**: nav items, Settings tabs, and action buttons hide based on effective permissions (agents lose Integrations, Users, Platform Admin).
+- **Impersonation v2**: impersonate a specific user OR preview a role (`{role, org_id}`). Owner → anyone; admins/granted roles → own business only. Sessions reflect the target's privileges; `require_owner` blocks all `/api/admin/*` while impersonating. Banner + Stop.
+- **AI Blueprints** (replaces single global prompt): named prompts (`/api/admin/blueprints` CRUD), one default auto-assigned to new businesses, assignable per business or cleared (opt-out). `attach_system_prefix` = blueprint + org extension.
+- **User banning**: `/api/users/{id}/ban` (requires `ban_users`, reason mandatory) blocks login (403 + reason) and impersonation; `/unban` restores. Cannot ban self/owner.
+- **Platform Admin filters**: search businesses; search + role + business filters for users.
+- **Login page**: shows demo owner + admin boxes.
+- **Windows 1-command run**: `start.bat` auto-creates `backend/.env` + `frontend/.env` on first run (generates JWT secret); DB auto-seeds (owner, admin, default blueprint, demo) on backend startup.
+- Testing: backend 21/21 after fixing role-update audit type bug; frontend RBAC + impersonation verified. Email & WhatsApp remain MOCK.
+
 ## Backlog / Next (updated)
 - P1: Disable email send-now button while pending (avoid double-count); real Gmail/O365 OAuth + actual delivery when desired.
 - P1: Resolve known iter-3 sticky-LLM-key-on-provider-switch edge case.

@@ -87,7 +87,7 @@ def build_rbac_router(get_current_user, user_can, user_has_cap, record_audit):
                 raise HTTPException(400, "Reserved role name.")
             updates["name"] = nn
         await db.roles.update_one({"id": role_id}, {"$set": updates})
-        await record_audit(user["org_id"], user["email"], "role_update", "role", role_id, after=list(updates.keys()))
+        await record_audit(user["org_id"], user["email"], "role_update", "role", role_id, after={k: True for k in updates.keys()})
         return await db.roles.find_one({"id": role_id}, {"_id": 0})
 
     @router.delete("/roles/{role_id}")
