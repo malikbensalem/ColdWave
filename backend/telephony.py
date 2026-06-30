@@ -59,19 +59,39 @@ async def _devices(c: dict, token: str) -> list:
     return resp.json() or []
 
 
+async def _list_dns(c: dict, token: str) -> list:
+    async with httpx.AsyncClient(verify=c["verify"], timeout=20.0) as client:
+        resp = await client.get(f"{c['base_url']}/callcontrol",
+                                headers={"Authorization": f"Bearer {token}"})
+    if resp.status_code != 200:
+        raise RuntimeError(f"Could not list controllable DNs ({resp.status_code}): {resp.text[:200]}")
+    return resp.json() or []
+
+
 async def test_connection(integ: dict) -> dict:
-    """Authenticate and list devices for the configured extension."""
+    """Authenticate and confirm the configured DN is controllable by this API app."""
     c = _cfg(integ)
     _require_config(c)
     token = await _get_token(c)
-    devices = await _devices(c, token)
+    dns = await _list_dns(c, token)
+    match = next((d for d in dns if isinstance(d, dict) and str(d.get("dn")) == c["dn"]), None)
+    if not match:
+        available = ", ".join(str(d.get("dn")) for d in dns if isinstance(d, dict)) or "none"
+        raise RuntimeError(f"Authenticated, but DN {c['dn']} is not controllable by this API app. "
+                           f"Controllable DNs: {available}. For automated outbound use a Route Point DN.")
+    dn_type = match.get("type", "")
+    is_rp = "routepoint" in str(dn_type).lower()
+    devices = match.get("devices") or []
     return {
         "ok": True,
         "extension": c["dn"],
+        "dn_type": dn_type,
+        "is_route_point": is_rp,
         "device_count": len(devices),
-        "message": (f"Connected to 3CX. Extension {c['dn']} has {len(devices)} registered device(s)."
-                    if devices else f"Connected to 3CX, but extension {c['dn']} has no registered devices. "
-                                    "Register a phone/softphone on that extension to place calls."),
+        "message": (f"Connected to 3CX. DN {c['dn']} is a Route Point — ready for direct automated outbound calls."
+                    if is_rp else
+                    f"Connected to 3CX. DN {c['dn']} is a user extension with {len(devices)} device(s). "
+                    f"Note: calling from a user extension rings that extension — use a Route Point for automated outbound."),
     }
 
 
