@@ -9,8 +9,9 @@ from models import (
     CampaignCreate, CampaignUpdate, VoicePreviewRequest, TestCallStartRequest,
     TestCallTurnRequest, DNCAddRequest, ErasureRequest, OrgUpdateRequest,
     IntegrationSettings, InviteUserRequest, UpdateUserRequest, ElevenLabsTestRequest,
-    LLMTestRequest, VoiceCharacteristicsUpdate, BanRequest, now_utc, new_id,
+    LLMTestRequest, VoiceCharacteristicsUpdate, BanRequest, DialRequest, now_utc, new_id,
 )
+from telephony import test_connection as telephony_test, make_call as telephony_make_call
 from integrations import (
     VOICE_CATALOG, get_voice, generate_voice_preview, generate_script,
     agent_reply, analyze_transcript, generate_tts, select_tts_provider,
@@ -581,8 +582,54 @@ async def test_tcx(user: dict = Depends(require_admin)):
     integ = (org or {}).get("integrations", {})
     if not integ.get("tcx_url"):
         raise HTTPException(400, "3CX URL not configured")
-    # MOCK: real 3CX Call Control API connection would be validated here.
-    return {"ok": True, "mock": True, "message": f"Mock connection to 3CX at {integ['tcx_url']} succeeded. (Live calls require a reachable 3CX Call Control API.)"}
+    try:
+        result = await telephony_test(integ)
+        return result
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach 3CX: {str(e)[:160]}")
+
+
+@router.post("/calls/dial")
+async def dial_contact(req: DialRequest, user: dict = Depends(require_perm("leads", "read"))):
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    integ = (org or {}).get("integrations", {})
+    if not integ.get("tcx_enabled"):
+        raise HTTPException(400, "3CX live calling is not enabled. Configure and enable it in Settings → Integrations.")
+
+    contact = None
+    destination = req.destination
+    if req.contact_id:
+        contact = await db.contacts.find_one({"id": req.contact_id, "org_id": user["org_id"]}, {"_id": 0})
+        if not contact:
+            raise HTTPException(404, "Contact not found")
+        if contact.get("opted_out") or contact.get("do_not_call"):
+            raise HTTPException(400, "This contact has opted out / is on the Do Not Call list.")
+        destination = destination or contact.get("phone")
+    if not destination:
+        raise HTTPException(400, "No phone number to dial.")
+
+    try:
+        result = await telephony_make_call(integ, destination)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Could not place call via 3CX: {str(e)[:160]}")
+
+    call_doc = {
+        "id": new_id("call"), "org_id": user["org_id"], "type": "manual",
+        "contact_id": req.contact_id, "contact_name": (contact or {}).get("name", ""),
+        "destination": destination, "extension": integ.get("tcx_extension", ""),
+        "provider": "3cx", "callid": result.get("callid"), "status": result.get("status", "Initiated"),
+        "agent_id": user["id"], "agent_email": user["email"], "created_at": now_utc().isoformat(),
+    }
+    await db.calls.insert_one(dict(call_doc))
+    if contact and contact.get("status") in (None, "new"):
+        await db.contacts.update_one({"id": contact["id"], "org_id": user["org_id"]}, {"$set": {"status": "contacted"}})
+    await audit(user["org_id"], user, "manual_call", destination, entity="contact", entity_id=req.contact_id)
+    call_doc.pop("_id", None)
+    return {"ok": True, "callid": result.get("callid"), "status": result.get("status"), "call": clean(call_doc)}
 
 
 # ---------------- User Management ----------------

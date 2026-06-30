@@ -16,6 +16,7 @@ export default function Leads() {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState(null);
+  const [dialing, setDialing] = useState(null);
   const [form, setForm] = useState({ name: "", phone: "", email: "", company: "", notes: "", consent: false });
 
   const load = useCallback(async () => {
@@ -63,6 +64,17 @@ export default function Leads() {
     toast.success("Lead removed");
     load();
     setDetail(null);
+  };
+
+  const dial = async (contact, e) => {
+    if (e) e.stopPropagation();
+    setDialing(contact.id);
+    try {
+      const { data } = await api.post("/calls/dial", { contact_id: contact.id });
+      toast.success(`Calling ${contact.name} — your 3CX extension will ring first, then connect the lead. (${data.status || "initiated"})`);
+      load();
+    } catch (err) { toast.error(apiErr(err)); }
+    finally { setDialing(null); }
   };
 
   return (
@@ -123,10 +135,13 @@ export default function Leads() {
               <th className="py-2.5 px-4 font-semibold">Status</th>
               <th className="py-2.5 px-4 font-semibold">Sentiment</th>
               <th className="py-2.5 px-4 font-semibold">Consent</th>
+              <th className="py-2.5 px-4 font-semibold text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {contacts.map((c) => (
+            {contacts.map((c) => {
+              const callable = !c.opted_out && !c.do_not_call && c.status !== "opted_out" && c.status !== "dnc";
+              return (
               <tr key={c.id} data-testid={`lead-row-${c.id}`} onClick={() => openDetail(c.id)} className="border-b border-border/60 hover:bg-muted/50 cursor-pointer">
                 <td className="py-2.5 px-4 font-medium">{c.name}</td>
                 <td className="py-2.5 px-4 text-muted-foreground">{c.company || "—"}</td>
@@ -134,9 +149,16 @@ export default function Leads() {
                 <td className="py-2.5 px-4"><StatusBadge status={c.status} /></td>
                 <td className="py-2.5 px-4"><SentimentBadge sentiment={c.sentiment} /></td>
                 <td className="py-2.5 px-4">{c.consent ? <span className="text-success text-xs font-semibold">Yes</span> : <span className="text-muted-foreground text-xs">No</span>}</td>
+                <td className="py-2.5 px-4 text-right">
+                  <button data-testid={`call-lead-${c.id}`} disabled={!callable || dialing === c.id} onClick={(e) => dial(c, e)}
+                    title={callable ? "Call via 3CX" : "Contact opted out / DNC"}
+                    className="inline-flex items-center gap-1.5 h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent hover:text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                    <PhoneCall size={14} weight="fill" /> {dialing === c.id ? "Calling…" : "Call"}
+                  </button>
+                </td>
               </tr>
-            ))}
-            {contacts.length === 0 && <tr><td colSpan={6} className="py-10 text-center text-muted-foreground text-sm">No leads found.</td></tr>}
+            ); })}
+            {contacts.length === 0 && <tr><td colSpan={7} className="py-10 text-center text-muted-foreground text-sm">No leads found.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -175,7 +197,11 @@ export default function Leads() {
                 </div>
 
                 <div className="flex gap-2 pt-2 border-t border-border">
-                  <button data-testid="dnc-lead-button" onClick={() => addDnc(detail.phone)} className="flex-1 inline-flex items-center justify-center gap-1.5 h-9 rounded-sm border border-destructive/40 text-destructive text-sm font-medium hover:bg-destructive/10"><ShieldSlash size={15} weight="bold" /> Add to DNC</button>
+                  <button data-testid="call-lead-detail-button" onClick={() => dial(detail)} disabled={detail.opted_out || detail.do_not_call || detail.status === "opted_out" || detail.status === "dnc" || dialing === detail.id}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 h-9 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 disabled:opacity-40">
+                    <PhoneCall size={15} weight="fill" /> {dialing === detail.id ? "Calling…" : "Call via 3CX"}
+                  </button>
+                  <button data-testid="dnc-lead-button" onClick={() => addDnc(detail.phone)} className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-sm font-medium hover:bg-destructive/10"><ShieldSlash size={15} weight="bold" /> DNC</button>
                   <button data-testid="delete-lead-button" onClick={() => remove(detail.id)} className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-sm border border-border text-muted-foreground text-sm hover:bg-accent"><Trash size={15} weight="bold" /></button>
                 </div>
               </div>

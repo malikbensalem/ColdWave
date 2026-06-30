@@ -70,6 +70,11 @@ class AssignBlueprintRequest(BaseModel):
     blueprint_id: Optional[str] = None
 
 
+class DialRequest(BaseModel):
+    contact_id: Optional[str] = None
+    destination: Optional[str] = None
+
+
 # ---------- Org / Settings ----------
 class IntegrationSettings(BaseModel):
     tcx_enabled: bool = False
@@ -77,6 +82,7 @@ class IntegrationSettings(BaseModel):
     tcx_username: str = ""
     tcx_password: str = ""
     tcx_extension: str = ""
+    tcx_verify_tls: bool = True
     elevenlabs_api_key: str = ""
     elevenlabs_enabled: bool = False
     elevenlabs_model: str = "eleven_multilingual_v2"

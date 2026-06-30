@@ -129,18 +129,19 @@ function IntegrationsTab() {
 
   return (
     <div className="space-y-4 max-w-3xl">
-      <Section icon={Phone} title="3CX Telephony" badge={data.tcx_url ? "Configured" : "Not set"}>
+      <Section icon={Phone} title="3CX Telephony (Call Control API)" badge={data.tcx_url ? "Configured" : "Not set"}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <F label="3CX Call Control URL" testid="tcx-url" value={data.tcx_url} onChange={set("tcx_url")} placeholder="https://yourpbx.3cx.eu:5001" />
-          <F label="Extension" testid="tcx-ext" value={data.tcx_extension} onChange={set("tcx_extension")} />
-          <F label="API Username" testid="tcx-user" value={data.tcx_username} onChange={set("tcx_username")} />
-          <F label="API Password" testid="tcx-pass" type="password" value={data.tcx_password} onChange={set("tcx_password")} />
+          <F label="3CX Call Control URL" testid="tcx-url" value={data.tcx_url} onChange={set("tcx_url")} placeholder="https://yourpbx.3cx.co.za:5001" />
+          <F label="Extension / DN" testid="tcx-ext" value={data.tcx_extension} onChange={set("tcx_extension")} placeholder="2089" />
+          <F label="API Client ID" testid="tcx-user" value={data.tcx_username} onChange={set("tcx_username")} placeholder="Client ID from 3CX → Integrations → API" />
+          <F label="API Key (secret)" testid="tcx-pass" type="password" value={data.tcx_password} onChange={set("tcx_password")} placeholder="API key shown once on creation" />
         </div>
-        <div className="flex items-center gap-3 mt-1">
+        <div className="flex items-center gap-3 mt-1 flex-wrap">
           <Toggle testid="tcx-enabled" label="Enable 3CX live calling" checked={data.tcx_enabled} onChange={set("tcx_enabled")} />
+          <Toggle testid="tcx-verify-tls" label="Verify TLS certificate" checked={data.tcx_verify_tls !== false} onChange={set("tcx_verify_tls")} />
           <button data-testid="test-tcx-button" onClick={testTcx} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent">Test connection</button>
         </div>
-        <p className="text-xs text-muted-foreground">Live calls route through your 3CX Call Control API. Currently mock until a reachable PBX is connected.</p>
+        <p className="text-xs text-muted-foreground">Create an app in <b>3CX Admin → Integrations → API</b> with <b>Call Control Access</b> enabled (requires 8SC+ Enterprise). Use its <b>Client ID</b> and <b>API Key</b> here. Use the bare PBX FQDN (no <code>www.</code>). Calling from the CRM rings this extension's device first, then dials the lead.</p>
       </Section>
 
       <Section icon={MicrophoneStage} title="ElevenLabs Voice" badge={elevenStatus ? (elevenStatus.valid ? "Valid ✓" : "Invalid ✗") : (data.elevenlabs_api_key ? "Key set" : "Mock mode")}>

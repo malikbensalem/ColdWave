@@ -76,6 +76,12 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - **Windows 1-command run**: `start.bat` auto-creates `backend/.env` + `frontend/.env` on first run (generates JWT secret); DB auto-seeds (owner, admin, default blueprint, demo) on backend startup.
 - Testing: backend 21/21 after fixing role-update audit type bug; frontend RBAC + impersonation verified. Email & WhatsApp remain MOCK.
 
+## Iteration 6 (2026-06-30) — Real 3CX Call Control + manual CRM calling
+- **3CX Call Control API (v20) integration** (`telephony.py`): OAuth `client_credentials` token (cached per tenant, refreshed before expiry) → `GET /callcontrol/{dn}/devices` → `POST /callcontrol/{dn}/devices/{deviceId}/makecall`. Real (no mock).
+- `/api/settings/integrations/tcx/test` now performs a live auth + device check; added `tcx_verify_tls` setting; Settings 3CX section relabeled (Client ID / API Key, FQDN-without-www hint, TLS toggle).
+- **Manual calling from CRM**: `POST /api/calls/dial {contact_id|destination}` originates a click-to-call (rings the org extension's device, then the lead), logs a `manual` call, bumps new→contacted, audits. Honors opt-out/DNC. UI: Call button per lead row + in the detail sheet (disabled for opted-out/DNC).
+- **Status**: implementation verified end-to-end against the live PBX (token endpoint reachable, device/makecall flow correct). The supplied test credentials returned **401 at /connect/token** — a 3CX-side credential/config issue (need a Call Control API app's Client ID + API Key with Call Control Access enabled; also the FQDN is `citiq.3cx.co.za` not `www.citiq...`). Test creds cleared from DB after testing.
+
 ## Backlog / Next (updated)
 - P1: Disable email send-now button while pending (avoid double-count); real Gmail/O365 OAuth + actual delivery when desired.
 - P1: Resolve known iter-3 sticky-LLM-key-on-provider-switch edge case.
