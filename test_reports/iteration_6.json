@@ -1,0 +1,45 @@
+{
+  "summary": "PRIMARY BUG FIX VERIFIED. /api/settings/integrations/tcx/test now returns 200 with {ok:true, extension:'1019', device_count:1, message:'Connected to 3CX. Extension 1019 has 1 registered device(s).'} when tcx_url is saved WITHOUT a scheme ('citiq.3cx.co.za:5001'). Also confirmed working with explicit 'https://' scheme. Dial guards work: 400 when 3CX disabled, 400 when contact is opted_out/DNC. Frontend: Settings → Integrations 3CX section exposes all required testids, Test connection succeeded end-to-end against the real 3CX (1 device on ext 1019). CRM/Leads: 6 lead rows render, Daniel Cole's call button is correctly DISABLED (Opted Out), other leads' Call buttons enabled, and call-lead-detail-button is present + enabled in the detail sheet for a non-opted-out lead. NO actual outbound call was placed (per instructions).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Settings → Integrations", "issues": ["Direct deep-link to /settings/integrations does not work — only /settings is registered as a route and Integrations is an internal tab. Minor; deep-link would require either a nested route or query-param tab selector."]}
+    ]
+  },
+  "verified_passing": [
+    "POST /api/settings/integrations/tcx/test => 200 OK with NO-scheme URL 'citiq.3cx.co.za:5001' (THE BUG FIX). Response: {ok:true, extension:'1019', device_count:1, message:'Connected to 3CX. Extension 1019 has 1 registered device(s).'}",
+    "POST /api/settings/integrations/tcx/test => 200 OK with explicit 'https://citiq.3cx.co.za:5001'",
+    "POST /api/settings/integrations/tcx/test => 400 when tcx_url is empty",
+    "POST /api/calls/dial => 400 'not enabled' when tcx_enabled=false",
+    "POST /api/calls/dial => 400 opt-out/DNC guard when contact has opted_out=true",
+    "Settings UI: tcx-url, tcx-ext, tcx-user, tcx-pass, tcx-enabled, tcx-verify-tls, test-tcx-button, save-integrations-button all PRESENT in Integrations tab",
+    "Settings UI: Saved no-scheme URL via UI then clicked Test connection → backend returned 200 with the success message (network response captured)",
+    "Leads UI: 6 lead-row-* with matching call-lead-<contactId> buttons. Daniel Cole (Opted Out) row's button has disabled=true; the other 5 (Aisha Khan, Sarah Bennett, Tom O'Brien, Priya Sharma, James Whitfield) have enabled call buttons",
+    "Leads UI: opening detail sheet for a non-opted-out lead shows call-lead-detail-button (enabled). Did NOT click it (no real call placed)"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_tcx_iter6.py",
+    "/app/test_reports/pytest/iter6_tcx.xml"
+  ],
+  "action_items": [
+    "OPTIONAL UX: Consider adding a 'normalized URL' helper hint under the 3CX URL field showing the resolved 'https://...' so users know the scheme will be prepended automatically.",
+    "OPTIONAL UX: Provide deep-link support for Settings tabs (e.g. ?tab=integrations) so /settings/integrations or query param resolves the right tab. Not blocking."
+  ],
+  "critical_code_review_comments": [
+    "telephony._cfg now correctly prepends 'https://' when scheme is missing — guards against the original httpx parse failure and the Cloudflare 520 path.",
+    "test_tcx route correctly maps ValueError/RuntimeError → 400 and other exceptions → 502 with a truncated message; good UX.",
+    "dial_contact correctly checks tcx_enabled and opted_out/do_not_call BEFORE invoking telephony; ordering and HTTP codes are appropriate (400 for client/business errors)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_tcx_iter6.py (new — 5 tests, all passing)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin: admin@coldwave.ai / Admin123! ; 3CX (real test creds saved on admin's org): URL='citiq.3cx.co.za:5001' (no scheme), DN=1019, ClientID=45214521, secret=94qyLmZIzY1VABX4io9NKaR9iwO69Scu",
+  "seed_data_creation": "Backend test creates/cleans a TEST_OptedOut_Tester contact only if no opted-out contact already exists (Daniel Cole was already opted-out, so no creation was needed in this run). Restores integrations after each guard test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend regression suite for 3CX bug fix lives at /app/backend/tests/test_tcx_iter6.py. Run with: pytest /app/backend/tests/test_tcx_iter6.py -v. Frontend Settings tab is under /settings (not /settings/integrations). To exercise Test connection via UI, navigate to /settings then click the 'Integrations' tab, then click test-tcx-button. Toast disappears quickly; capture the network response for /api/settings/integrations/tcx/test for ground truth. Do NOT click the enabled lead Call buttons — this would place a real outbound call via 3CX.",
+  "rca of the issue": "Original bug: tcx_url like 'citiq.3cx.co.za:5001' (no scheme) caused httpx.AsyncClient.post(f'{base}/connect/token') to construct an invalid request URL, which (depending on routing) propagated as a Cloudflare 520 'invalid/incomplete response'. Fix in /app/backend/telephony.py _cfg(): if base is truthy and does not startswith ('http://','https://'), prepend 'https://'. Verified by running the same Test connection flow with the no-scheme URL and observing a 200 OK with device_count=1."
+}

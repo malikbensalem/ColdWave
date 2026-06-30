@@ -11,7 +11,9 @@ _token_cache: dict = {}
 
 
 def _cfg(integ: dict):
-    base = (integ.get("tcx_url") or "").rstrip("/")
+    base = (integ.get("tcx_url") or "").strip().rstrip("/")
+    if base and not base.lower().startswith(("http://", "https://")):
+        base = "https://" + base
     return {
         "base_url": base,
         "dn": (integ.get("tcx_extension") or "").strip(),
