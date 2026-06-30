@@ -82,6 +82,13 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - **Manual calling from CRM**: `POST /api/calls/dial {contact_id|destination}` originates a click-to-call (rings the org extension's device, then the lead), logs a `manual` call, bumps new→contacted, audits. Honors opt-out/DNC. UI: Call button per lead row + in the detail sheet (disabled for opted-out/DNC).
 - **Status**: implementation verified end-to-end against the live PBX (token endpoint reachable, device/makecall flow correct). The supplied test credentials returned **401 at /connect/token** — a 3CX-side credential/config issue (need a Call Control API app's Client ID + API Key with Call Control Access enabled; also the FQDN is `citiq.3cx.co.za` not `www.citiq...`). Test creds cleared from DB after testing.
 
+## Iteration 7 (2026-06-30) — 3CX direct-dial fix (Route Point origination)
+- **Bug**: CRM Call rang the agent's own extension (1019) and never dialed the client — a normal 3CX user extension is always a participant in its own call.
+- **Fix**: `telephony.make_call` now originates at the **DN level (Route Point)** so the client number is dialed directly with no human leg (device fallback retained for normal extensions). `test_connection` now uses `GET /callcontrol` to confirm the DN is controllable and reports `is_route_point`/`dn_type`. Destination keeps the `+CC` format.
+- **Config**: the Route Point DN is `45214521` (same as the API Client ID). Saved + enabled on the demo org.
+- **Verified by testing agent (100%)**: live `POST /api/calls/dial {destination:+27625058013}` → `ok, status Dialing, call.destination=+27625058013` (not 1019/route point); test-connection reports Route Point; opt-out/empty guards return 400; CRM Call button disabled for opted-out leads.
+- Note: `/app/backend/tests/test_tcx_iter7_routepoint.py` includes a LIVE dial test — placing a real call on each run; run only for phone-side checks.
+
 ## Backlog / Next (updated)
 - P1: Disable email send-now button while pending (avoid double-count); real Gmail/O365 OAuth + actual delivery when desired.
 - P1: Resolve known iter-3 sticky-LLM-key-on-provider-switch edge case.
