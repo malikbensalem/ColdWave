@@ -141,7 +141,7 @@ function IntegrationsTab() {
           <Toggle testid="tcx-verify-tls" label="Verify TLS certificate" checked={data.tcx_verify_tls !== false} onChange={set("tcx_verify_tls")} />
           <button data-testid="test-tcx-button" onClick={testTcx} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent">Test connection</button>
         </div>
-        <p className="text-xs text-muted-foreground">Create an app in <b>3CX Admin → Integrations → API</b> with <b>Call Control Access</b> enabled (requires 8SC+ Enterprise). Use its <b>Client ID</b> and <b>API Key</b> here. Use the bare PBX FQDN (no <code>www.</code>). Calling from the CRM rings this extension's device first, then dials the lead.</p>
+        <p className="text-xs text-muted-foreground">Create an app in <b>3CX Admin → Integrations → API</b> with <b>Call Control Access</b> enabled (8SC+ Enterprise) and use its <b>Client ID</b> + <b>API Key</b>. Use the bare PBX FQDN (no <code>www.</code>). <b>For automated outbound (no human), set "Extension / DN" to a 3CX Route Point</b> assigned to this app — a normal user extension just rings itself instead of dialing out.</p>
       </Section>
 
       <Section icon={MicrophoneStage} title="ElevenLabs Voice" badge={elevenStatus ? (elevenStatus.valid ? "Valid ✓" : "Invalid ✗") : (data.elevenlabs_api_key ? "Key set" : "Mock mode")}>

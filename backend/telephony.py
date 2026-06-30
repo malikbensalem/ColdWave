@@ -75,30 +75,56 @@ async def test_connection(integ: dict) -> dict:
     }
 
 
-async def make_call(integ: dict, destination: str) -> dict:
-    """Originate a click-to-call: rings the configured extension, then dials the destination."""
-    c = _cfg(integ)
-    _require_config(c)
-    if not destination:
-        raise ValueError("No destination number provided.")
-    token = await _get_token(c)
-    devices = await _devices(c, token)
-    if not devices:
-        raise RuntimeError(f"Extension {c['dn']} has no registered devices to call from.")
-    device_id = devices[0].get("device_id") or devices[0].get("dn")
-    path = f"/callcontrol/{c['dn']}/devices/{quote(str(device_id), safe='')}/makecall"
-    async with httpx.AsyncClient(verify=c["verify"], timeout=25.0) as client:
-        resp = await client.post(f"{c['base_url']}{path}",
-                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                                 json={"destination": destination})
-    if resp.status_code not in (200, 202):
-        raise RuntimeError(f"3CX make-call failed ({resp.status_code}): {resp.text[:200]}")
+def _parse_makecall(resp) -> dict:
     body = resp.json() if resp.text else {}
     result = body.get("result", body) if isinstance(body, dict) else {}
     return {
         "ok": True,
-        "device_id": device_id,
-        "callid": (result.get("callid") if isinstance(result, dict) else None) or body.get("callid"),
-        "status": (result.get("status") if isinstance(result, dict) else None) or body.get("status", "Initiated"),
+        "callid": (result.get("callid") if isinstance(result, dict) else None) or (body.get("callid") if isinstance(body, dict) else None),
+        "status": (result.get("status") if isinstance(result, dict) else None) or (body.get("status") if isinstance(body, dict) else None) or "Initiated",
         "raw": body,
     }
+
+
+async def make_call(integ: dict, destination: str) -> dict:
+    """Originate a direct outbound call to `destination`.
+
+    Primary path is a DN-level makecall (Route Point style) which dials the
+    destination DIRECTLY with no human leg — the correct mode for automated /
+    AI outbound. Falls back to a device makecall only if the DN has registered
+    devices (i.e. it's a normal extension).
+    """
+    c = _cfg(integ)
+    _require_config(c)
+    if not destination:
+        raise ValueError("No destination number provided.")
+    destination = destination.strip().replace(" ", "")
+    token = await _get_token(c)
+    payload = {"destination": destination, "timeout": 30}
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(verify=c["verify"], timeout=25.0) as client:
+        # 1) DN-level direct dial (Route Point) — dials the client directly.
+        resp = await client.post(f"{c['base_url']}/callcontrol/{c['dn']}/makecall",
+                                 headers=headers, json=payload)
+        if resp.status_code in (200, 202):
+            return _parse_makecall(resp)
+        dn_err = f"{resp.status_code}: {resp.text[:160]}"
+
+        # 2) Fallback: device-level makecall (normal extension with a softphone).
+        dresp = await client.get(f"{c['base_url']}/callcontrol/{c['dn']}/devices",
+                                 headers={"Authorization": f"Bearer {token}"})
+        devices = dresp.json() if dresp.status_code == 200 and dresp.text else []
+        if devices:
+            device_id = devices[0].get("device_id") or devices[0].get("dn")
+            path = f"/callcontrol/{c['dn']}/devices/{quote(str(device_id), safe='')}/makecall"
+            resp2 = await client.post(f"{c['base_url']}{path}", headers=headers, json=payload)
+            if resp2.status_code in (200, 202):
+                return _parse_makecall(resp2)
+            raise RuntimeError(f"3CX make-call failed (device {resp2.status_code}): {resp2.text[:160]}")
+
+    raise RuntimeError(
+        f"3CX could not place a direct outbound call (DN {c['dn']} returned {dn_err}). "
+        "For automated outbound with no human leg, set 'Extension / DN' to a 3CX Route Point "
+        "assigned to this API app — a normal user extension will ring itself instead of dialing out."
+    )
