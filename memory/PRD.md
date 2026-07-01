@@ -89,6 +89,25 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - **Verified by testing agent (100%)**: live `POST /api/calls/dial {destination:+27625058013}` → `ok, status Dialing, call.destination=+27625058013` (not 1019/route point); test-connection reports Route Point; opt-out/empty guards return 400; CRM Call button disabled for opted-out leads.
 - Note: `/app/backend/tests/test_tcx_iter7_routepoint.py` includes a LIVE dial test — placing a real call on each run; run only for phone-side checks.
 
+## Iteration 8 (2026-06-30) — bug fixes: test-connection on current input, local install, token cache
+- **Test connection uses current form input** (no save required): `POST /settings/integrations/tcx/test` now accepts `{tcx_url,tcx_extension,tcx_username,tcx_password,tcx_verify_tls}` and merges over saved (verified by testing agent).
+- **Local run fix**: `start.sh` / `start.bat` now install with `--extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/` so `emergentintegrations` resolves off-Emergent.
+- **Token cache correctness**: `telephony._get_token` cache key now includes a hash of the client secret, so a rotated/wrong API key re-authenticates instead of reusing a stale token.
+
+## Big roadmap requested (2026-06-30) — to be phased
+- CRM: multi-call history per client; columns Name/Phone/Email/Company/Call status/rating/summary/transcript/campaign/date; summary & transcript popups.
+- Campaigns 2.0: run by client filters; schedule; contacted & upcoming lists; live queue (called/next/results); campaign avg rating + usage count.
+- Multi-channel (Email/WhatsApp/SMS) schedulers at parity with calls (ratings, usage, contacted lists); AI auto-reply with human approval; per-channel AI blueprints (call/email/whatsapp).
+- Live call controls: listen-in, manual trigger, whisper/barge, take over.
+- Show 3CX callable countries.
+- Editable user roles + change role (RBAC exists; extend UI). Hide GLOBAL prompt from admins (owners only, Platform Admin only, not Settings).
+- Ban from Users screen (admin + reason); owner ban any user/company from Platform Admin.
+- Voice speed control + voice tweaks in Voices tab (document drawbacks).
+- Editable scripts (toggle line-by-line/personality + content); smarter line-by-line that ignores titles/speaker labels.
+- White-labelling (fonts, logo, colours, company name) keeping ColdWave branding; admin-configurable by permission.
+- Owner: choose per-company feature access; Packages (prebuilt access tiers + price, per-company custom price, limits on calls/customers/features, time-limited access).
+- Credit/usage limits: stop campaign when AI/ElevenLabs/3CX credits exhausted + notify company users.
+
 ## Backlog / Next (updated)
 - P1: Disable email send-now button while pending (avoid double-count); real Gmail/O365 OAuth + actual delivery when desired.
 - P1: Resolve known iter-3 sticky-LLM-key-on-provider-switch edge case.

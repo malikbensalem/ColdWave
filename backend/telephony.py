@@ -1,5 +1,6 @@
 """3CX Call Control API (v20) client — token auth + click-to-call origination."""
 import time
+import hashlib
 import logging
 from urllib.parse import quote
 import httpx
@@ -30,7 +31,8 @@ def _require_config(c):
 
 
 async def _get_token(c: dict) -> str:
-    key = f"{c['base_url']}|{c['client_id']}"
+    secret_sig = hashlib.sha256((c["client_secret"] or "").encode()).hexdigest()[:12]
+    key = f"{c['base_url']}|{c['client_id']}|{secret_sig}"
     cached = _token_cache.get(key)
     now = time.time()
     if cached and cached["exp"] > now + 60:

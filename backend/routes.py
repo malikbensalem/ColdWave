@@ -92,6 +92,22 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
 
 
 # ---------------- Contacts (CRM) ----------------
+async def _campaign_name_map(org_id: str) -> dict:
+    camps = await db.campaigns.find({"org_id": org_id}, {"_id": 0, "id": 1, "name": 1}).to_list(1000)
+    return {c["id"]: c["name"] for c in camps}
+
+
+def _enrich_call(call: dict, cmap: dict) -> dict:
+    analysis = call.get("analysis") or {}
+    return {
+        **call,
+        "campaign_name": cmap.get(call.get("campaign_id"), "—") if call.get("campaign_id") else "—",
+        "rating": call.get("rating", analysis.get("score")),
+        "summary": call.get("summary", analysis.get("summary", "")),
+        "next_action": analysis.get("next_action", ""),
+    }
+
+
 @router.get("/contacts")
 async def list_contacts(user: dict = Depends(get_current_user), status: str = Query(None), search: str = Query(None)):
     q = {"org_id": user["org_id"]}
@@ -104,7 +120,32 @@ async def list_contacts(user: dict = Depends(get_current_user), status: str = Qu
             {"company": {"$regex": search, "$options": "i"}},
             {"email": {"$regex": search, "$options": "i"}},
         ]
-    return await db.contacts.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    contacts = await db.contacts.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    # Attach latest-call summary + call count per contact for the CRM table.
+    cmap = await _campaign_name_map(user["org_id"])
+    ids = [c["id"] for c in contacts]
+    calls = await db.calls.find({"org_id": user["org_id"], "contact_id": {"$in": ids}}, {"_id": 0}).sort("created_at", -1).to_list(20000)
+    by_contact = {}
+    for cl in calls:
+        cid = cl.get("contact_id")
+        by_contact.setdefault(cid, []).append(cl)
+    for c in contacts:
+        cl = by_contact.get(c["id"], [])
+        c["call_count"] = len(cl)
+        if cl:
+            latest = _enrich_call(cl[0], cmap)
+            c["last_call_status"] = latest.get("status")
+            c["last_call_rating"] = latest.get("rating")
+            c["last_call_summary"] = latest.get("summary")
+            c["last_call_campaign"] = latest.get("campaign_name")
+            c["last_call_date"] = latest.get("created_at")
+        else:
+            c["last_call_status"] = None
+            c["last_call_rating"] = None
+            c["last_call_summary"] = ""
+            c["last_call_campaign"] = "—"
+            c["last_call_date"] = None
+    return contacts
 
 
 @router.post("/contacts")
@@ -127,6 +168,8 @@ async def get_contact(contact_id: str, user: dict = Depends(get_current_user)):
     if not c:
         raise HTTPException(404, "Contact not found")
     c["calls"] = await db.calls.find({"contact_id": contact_id, "org_id": user["org_id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    cmap = await _campaign_name_map(user["org_id"])
+    c["calls"] = [_enrich_call(cl, cmap) for cl in c["calls"]]
     return c
 
 

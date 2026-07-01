@@ -6,9 +6,18 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { MagnifyingGlass, Plus, Trash, PhoneCall, ShieldSlash } from "@phosphor-icons/react";
+import { MagnifyingGlass, Plus, Trash, PhoneCall, ShieldSlash, FileText, ChatText, Star } from "@phosphor-icons/react";
 
 const STATUSES = ["all", "new", "contacted", "positive", "callback", "opted_out", "dnc"];
+
+function RatingBadge({ value }) {
+  if (value === null || value === undefined) return <span className="text-muted-foreground text-xs">—</span>;
+  const v = Number(value);
+  const color = v >= 70 ? "text-success" : v >= 40 ? "text-warning-foreground" : "text-destructive";
+  return <span className={`inline-flex items-center gap-1 text-xs font-semibold tnum ${color}`}><Star size={12} weight="fill" />{v}</span>;
+}
+
+function fmtDate(d) { return d ? new Date(d).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—"; }
 
 export default function Leads() {
   const [contacts, setContacts] = useState([]);
