@@ -9,7 +9,7 @@ from models import (
     CampaignCreate, CampaignUpdate, VoicePreviewRequest, TestCallStartRequest,
     TestCallTurnRequest, DNCAddRequest, ErasureRequest, OrgUpdateRequest,
     IntegrationSettings, InviteUserRequest, UpdateUserRequest, ElevenLabsTestRequest,
-    LLMTestRequest, VoiceCharacteristicsUpdate, BanRequest, DialRequest, now_utc, new_id,
+    LLMTestRequest, VoiceCharacteristicsUpdate, BanRequest, DialRequest, TcxTestRequest, now_utc, new_id,
 )
 from telephony import test_connection as telephony_test, make_call as telephony_make_call
 from integrations import (
@@ -577,14 +577,22 @@ async def update_integrations(req: IntegrationSettings, user: dict = Depends(req
 
 
 @router.post("/settings/integrations/tcx/test")
-async def test_tcx(user: dict = Depends(require_admin)):
+async def test_tcx(req: TcxTestRequest, user: dict = Depends(require_admin)):
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
-    integ = (org or {}).get("integrations", {})
+    saved = (org or {}).get("integrations", {})
+    # Use the values sent in the request (current form input) and fall back to
+    # saved values for any field left unset — no need to save before testing.
+    integ = {
+        "tcx_url": req.tcx_url if req.tcx_url is not None else saved.get("tcx_url", ""),
+        "tcx_extension": req.tcx_extension if req.tcx_extension is not None else saved.get("tcx_extension", ""),
+        "tcx_username": req.tcx_username if req.tcx_username is not None else saved.get("tcx_username", ""),
+        "tcx_password": req.tcx_password if req.tcx_password is not None else saved.get("tcx_password", ""),
+        "tcx_verify_tls": req.tcx_verify_tls if req.tcx_verify_tls is not None else saved.get("tcx_verify_tls", True),
+    }
     if not integ.get("tcx_url"):
         raise HTTPException(400, "3CX URL not configured")
     try:
-        result = await telephony_test(integ)
-        return result
+        return await telephony_test(integ)
     except (ValueError, RuntimeError) as e:
         raise HTTPException(400, str(e))
     except Exception as e:

@@ -65,7 +65,16 @@ function IntegrationsTab() {
   }, []);
   useEffect(() => { load(); }, [load]);
   const save = async (override) => { try { await api.put("/settings/integrations", override || data); toast.success("Integrations saved"); } catch (e) { toast.error(apiErr(e)); } };
-  const testTcx = async () => { try { const r = await api.post("/settings/integrations/tcx/test"); toast.success(r.data.message); } catch (e) { toast.error(apiErr(e)); } };
+  const testTcx = async () => {
+    try {
+      const r = await api.post("/settings/integrations/tcx/test", {
+        tcx_url: data.tcx_url, tcx_extension: data.tcx_extension,
+        tcx_username: data.tcx_username, tcx_password: data.tcx_password,
+        tcx_verify_tls: data.tcx_verify_tls,
+      });
+      toast.success(r.data.message);
+    } catch (e) { toast.error(apiErr(e)); }
+  };
 
   const validateEleven = async (auto = false) => {
     setElevenBusy(true); setElevenStatus(null);

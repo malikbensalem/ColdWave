@@ -1,0 +1,45 @@
+{
+  "summary": "BUG FIX VERIFIED. POST /api/settings/integrations/tcx/test now accepts a JSON body of current form values (tcx_url/tcx_extension/tcx_username/tcx_password/tcx_verify_tls) and merges over saved config — user no longer needs to click Save first. Backend + frontend behavior confirmed against the LIVE 3CX Route Point (citiq.3cx.co.za:5001, DN 45214521). One real defect uncovered by the negative-path test: the process-global bearer-token cache in telephony._get_token is keyed only by base_url+client_id, NOT by the client_secret — so a request that supplies a WRONG tcx_password in the body still reuses a previously-cached good token and returns 200 until the token expires (up to 1h). This does NOT block the reported bug fix (the primary and empty-body paths work correctly) but it does defeat the negative acceptance criterion from the review request and can mislead admins after a 3CX API key rotation.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/settings/integrations/tcx/test",
+        "issue": "3CX token cache in /app/backend/telephony.py::_get_token is keyed on (base_url|client_id) only; if the client_secret in the request body differs from the value that produced the cached token, the wrong password is silently accepted until token expiry. Expected: sending a WRONG tcx_password should return 400 with a 3CX auth error. Fix: include a hash of client_secret in the cache key (or drop the cache and re-auth every test call — test_connection is admin-only and rare)."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verified_passing": [
+    "POST /api/auth/login admin@coldwave.ai/Admin123! => 200",
+    "POST /api/settings/integrations/tcx/test with FULL body {tcx_url,tcx_extension,tcx_username,tcx_password,tcx_verify_tls} => 200, ok=true, is_route_point=true, dn_type='Wroutepoint', extension='45214521', message contains 'Route Point — ready for direct automated outbound calls' — proves current input is used without saving",
+    "POST /api/settings/integrations/tcx/test with EMPTY body {} => 200, ok=true, is_route_point=true — fallback to saved integrations works",
+    "POST /api/settings/integrations/tcx/test with WRONG password on a COLD backend (fresh restart, empty token cache) => 400 '3CX authentication failed (400): ... invalid_client ...' — proves the body value is used when no cached token exists",
+    "POST /api/settings/integrations/tcx/test with no session => 401 (admin gate intact)",
+    "Frontend Settings → Integrations: form fields tcx-url / tcx-ext / tcx-user / tcx-pass edited to live creds without clicking Save; clicking test-tcx-button issued POST /api/settings/integrations/tcx/test with the CURRENT input values (verified via intercepted request body) and received 200 with the 'Route Point — ready for direct automated outbound calls' message"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_tcx_iter8_test_body.py",
+    "/app/test_reports/pytest/iter8_tcx_test_body.xml"
+  ],
+  "action_items": [
+    "OPTIONAL (low priority): In /app/backend/telephony.py::_get_token, include a hash/prefix of client_secret in the cache key so a rotated API key or a wrong-password test triggers re-auth and correctly surfaces 3CX auth failures. Currently the wrong-password negative acceptance criterion cannot be observed once any successful test has cached a token in-process."
+  ],
+  "critical_code_review_comments": [
+    "routes.test_tcx correctly merges TcxTestRequest fields over saved integrations only when the field is None — good UX (empty string still overrides, so the admin can test with a blank URL and see the 'not configured' error). Uses HTTPException 400 for validation/auth errors and 502 only for connectivity — clean separation.",
+    "models.TcxTestRequest uses Optional[...] = None for every field so JSON body {} is valid — matches the spec.",
+    "Settings.jsx testTcx() sends all five fields verbatim from state — no accidental save side-effect. Good.",
+    "telephony._get_token caches by (base_url|client_id) only. This is the ONE real defect found in this iteration: it hides changed client_secrets until token expiry, breaking negative test flows and delaying the visible impact of a rotated API key. Recommend keying on (base_url|client_id|sha256(client_secret)[:12]).",
+    "test_connection surfaces is_route_point / dn_type — clear signal for the admin about whether automated outbound is truly available. Nice."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_tcx_iter8_test_body.py (new — 5 tests, 4 pass, 1 fail documents the token-cache bug)"
+  ],
+  "success_rate": {"backend": "80% (4/5 tests; the failing test is a legitimate defect, not a test issue)", "frontend": "100%"},
+  "test_credentials": "Admin admin@coldwave.ai / Admin123!. 3CX live creds used ONLY for the connectivity test endpoint (no phone call was placed): URL=citiq.3cx.co.za:5001, DN=45214521, ClientID=45214521, Secret=94qyLmZIzY1VABX4io9NKaR9iwO69Scu.",
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Regression suite for this iteration: /app/backend/tests/test_tcx_iter8_test_body.py. The wrong-password negative test PASSES only when the backend process has no token cached for client_id 45214521 (i.e. immediately after a supervisor restart). If run after any earlier successful test in the same process it will fail with 200 — this is the token-cache bug documented in action_items. To reproduce cleanly: `sudo supervisorctl restart backend && sleep 3 && pytest backend/tests/test_tcx_iter8_test_body.py::test_login_ok backend/tests/test_tcx_iter8_test_body.py::test_tcx_test_wrong_password_in_body_returns_400 -v`. No live outbound calls were placed in this iteration — only the connectivity test endpoint was exercised.",
+  "rca of the issue": "Primary bug (test requires saving first): FIXED. routes.test_tcx now takes a TcxTestRequest body and Settings.jsx.testTcx sends all current form field values; the backend merges over saved values only for None fields. Verified end-to-end. Secondary issue (uncovered by the negative-path acceptance criterion): telephony._get_token has an in-memory bearer-token cache keyed by (base_url|client_id) that does not consider client_secret, so a subsequent request with a different (wrong) secret reuses the cached good token and returns 200 instead of 400. Mitigation: include a hash of client_secret in the cache key, or clear the cache on test_connection invocations."
+}

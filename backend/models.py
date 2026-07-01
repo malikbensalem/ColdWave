@@ -75,6 +75,14 @@ class DialRequest(BaseModel):
     destination: Optional[str] = None
 
 
+class TcxTestRequest(BaseModel):
+    tcx_url: Optional[str] = None
+    tcx_extension: Optional[str] = None
+    tcx_username: Optional[str] = None
+    tcx_password: Optional[str] = None
+    tcx_verify_tls: Optional[bool] = None
+
+
 # ---------- Org / Settings ----------
 class IntegrationSettings(BaseModel):
     tcx_enabled: bool = False
