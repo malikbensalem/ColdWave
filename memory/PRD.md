@@ -166,6 +166,18 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - **#8** SMS section (WhatsApp-like) + New SMS campaign button (live SMS via Twilio).
 - **#10 (remainder)** Wire the dial path to honour `telephony_provider` (place real Twilio calls/SMS when selected + enabled); listen-in / manual-override.
 
+## Iteration 14 (2026-07-02) — Provider-aware dialing + CRM campaign picker (bug fixes)
+- **Dialer no longer hardcoded to 3CX**: new `place_outbound_call(integ, dest, say_text)` dispatches on `integrations.telephony_provider` — places calls via **Twilio** (`telephony.twilio_make_call`, Twilio REST + inline TwiML speaking the opening) when Twilio is selected+enabled, else 3CX. Applied to `/calls/dial` and `/campaigns/{id}/dial-next`. Errors now name the selected provider.
+- **CRM campaign picker**: clicking Call on a lead (row or detail sheet) opens a dialog to choose a campaign (or ad-hoc) before dialing; `DialRequest.campaign_id` logs the call against it and seeds the Twilio opening from the campaign's script.
+- **FIXED data-loss bug**: `PUT /settings/integrations` used to REPLACE the whole integrations object (defaults wiped unsent fields). Now merges via `model_dump(exclude_unset=True)` + `$set integrations.<k>` — partial saves no longer wipe secrets.
+- Verified: iteration_12.json — backend 5/5, frontend both entry points, integrations merge regression-tested. Buttons made provider-agnostic ("Call").
+- ⚠️ During earlier curl testing the demo org's **3CX API Client ID/Key and ElevenLabs key were cleared** (before the merge fix landed). URL/extension restored; the secret keys must be re-entered in Settings → Integrations.
+
+## Still TODO
+- **#10 (remainder)**: AI conversation over Twilio (Media Streams websocket) for full two-way AI calls; listen-in / whisper / barge / take-over.
+- **#7** Email provider connection (Gmail + O365 OAuth) UI under Settings.
+- **#8** SMS section (WhatsApp-like) + New SMS campaign button (live SMS via Twilio).
+
 ## Backlog / Next (updated)
 - P1: Disable email send-now button while pending (avoid double-count); real Gmail/O365 OAuth + actual delivery when desired.
 - P1: Resolve known iter-3 sticky-LLM-key-on-provider-switch edge case.

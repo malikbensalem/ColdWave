@@ -190,7 +190,7 @@ export default function Leads() {
                 <td className="py-2.5 px-4 text-muted-foreground text-xs whitespace-nowrap">{c.last_call_date ? fmtDate(c.last_call_date) : "—"}</td>
                 <td className="py-2.5 px-4 text-right">
                   <button data-testid={`call-lead-${c.id}`} disabled={!callable || dialing === c.id} onClick={(e) => openCall(c, e)}
-                    title={callable ? "Call via 3CX" : "Contact opted out / DNC"}
+                    title={callable ? "Call via 3CX / Twilio" : "Contact opted out / DNC"}
                     className="inline-flex items-center gap-1.5 h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent hover:text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                     <PhoneCall size={14} weight="fill" /> {dialing === c.id ? "Calling…" : "Call"}
                   </button>
@@ -262,7 +262,7 @@ export default function Leads() {
                 <div className="flex gap-2 pt-2 border-t border-border">
                   <button data-testid="call-lead-detail-button" onClick={() => openCall(detail)} disabled={detail.opted_out || detail.do_not_call || detail.status === "opted_out" || detail.status === "dnc" || dialing === detail.id}
                     className="flex-1 inline-flex items-center justify-center gap-1.5 h-9 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 disabled:opacity-40">
-                    <PhoneCall size={15} weight="fill" /> {dialing === detail.id ? "Calling…" : "Call via 3CX"}
+                    <PhoneCall size={15} weight="fill" /> {dialing === detail.id ? "Calling…" : "Call"}
                   </button>
                   <button data-testid="dnc-lead-button" onClick={() => addDnc(detail.phone)} className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-sm font-medium hover:bg-destructive/10"><ShieldSlash size={15} weight="bold" /> DNC</button>
                   <button data-testid="delete-lead-button" onClick={() => remove(detail.id)} className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-sm border border-border text-muted-foreground text-sm hover:bg-accent"><Trash size={15} weight="bold" /></button>
