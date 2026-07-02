@@ -9,7 +9,7 @@ from models import (
     CampaignCreate, CampaignUpdate, VoicePreviewRequest, TestCallStartRequest,
     TestCallTurnRequest, DNCAddRequest, ErasureRequest, OrgUpdateRequest,
     IntegrationSettings, InviteUserRequest, UpdateUserRequest, ElevenLabsTestRequest,
-    LLMTestRequest, VoiceCharacteristicsUpdate, BanRequest, DialRequest, TcxTestRequest, now_utc, new_id,
+    LLMTestRequest, VoiceCharacteristicsUpdate, BanRequest, DialRequest, TcxTestRequest, TwilioTestRequest, now_utc, new_id,
 )
 from telephony import test_connection as telephony_test, make_call as telephony_make_call
 from integrations import (
@@ -831,6 +831,30 @@ async def test_tcx(req: TcxTestRequest, user: dict = Depends(require_admin)):
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(502, f"Could not reach 3CX: {str(e)[:160]}")
+
+
+@router.post("/settings/integrations/twilio/test")
+async def test_twilio(req: TwilioTestRequest, user: dict = Depends(require_admin)):
+    """Validate Twilio credentials by fetching the account (no SDK needed — Basic-auth REST)."""
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    saved = (org or {}).get("integrations", {})
+    sid = (req.account_sid if req.account_sid is not None else saved.get("twilio_account_sid", "")).strip()
+    token = (req.auth_token if req.auth_token is not None else saved.get("twilio_auth_token", "")).strip()
+    if not sid or not token:
+        raise HTTPException(400, "Enter your Twilio Account SID and Auth Token first.")
+    import httpx
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}.json"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(url, auth=(sid, token))
+    except Exception as e:
+        return {"valid": False, "message": f"Could not reach Twilio: {str(e)[:120]}"}
+    if r.status_code == 200:
+        d = r.json()
+        return {"valid": True, "message": f"Twilio connected — account '{d.get('friendly_name', sid)}' ({d.get('status')})."}
+    if r.status_code in (401, 403):
+        return {"valid": False, "message": "Invalid Account SID or Auth Token."}
+    return {"valid": False, "message": f"Twilio returned HTTP {r.status_code}."}
 
 
 @router.post("/calls/dial")

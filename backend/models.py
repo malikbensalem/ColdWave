@@ -94,14 +94,24 @@ class TcxTestRequest(BaseModel):
     tcx_verify_tls: Optional[bool] = None
 
 
+class TwilioTestRequest(BaseModel):
+    account_sid: Optional[str] = None
+    auth_token: Optional[str] = None
+
+
 # ---------- Org / Settings ----------
 class IntegrationSettings(BaseModel):
+    telephony_provider: str = "3cx"  # "3cx" | "twilio"
     tcx_enabled: bool = False
     tcx_url: str = ""
     tcx_username: str = ""
     tcx_password: str = ""
     tcx_extension: str = ""
     tcx_verify_tls: bool = True
+    twilio_enabled: bool = False
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_phone_number: str = ""
     elevenlabs_api_key: str = ""
     elevenlabs_enabled: bool = False
     elevenlabs_model: str = "eleven_multilingual_v2"

@@ -78,6 +78,17 @@ function IntegrationsTab() {
       toast.success(r.data.message);
     } catch (e) { toast.error(apiErr(e)); }
   };
+  const [twilioStatus, setTwilioStatus] = useState(null);
+  const [twilioBusy, setTwilioBusy] = useState(false);
+  const testTwilio = async () => {
+    setTwilioBusy(true); setTwilioStatus(null);
+    try {
+      const r = await api.post("/settings/integrations/twilio/test", { account_sid: data.twilio_account_sid, auth_token: data.twilio_auth_token });
+      setTwilioStatus(r.data);
+      r.data.valid ? toast.success(r.data.message) : toast.error(r.data.message);
+    } catch (e) { toast.error(apiErr(e)); }
+    finally { setTwilioBusy(false); }
+  };
 
   const validateEleven = async (auto = false) => {
     setElevenBusy(true); setElevenStatus(null);
@@ -141,6 +152,16 @@ function IntegrationsTab() {
 
   return (
     <div className="space-y-4 max-w-3xl">
+      <Section icon={Phone} title="Telephony provider" badge={(data.telephony_provider || "3cx") === "twilio" ? "Twilio" : "3CX"}>
+        <p className="text-xs text-muted-foreground -mt-1 mb-2">Choose which provider places calls (and SMS). Configure the selected one below.</p>
+        <div className="inline-flex rounded-sm border border-border overflow-hidden" data-testid="telephony-provider-switch">
+          {[["3cx", "3CX Call Control"], ["twilio", "Twilio"]].map(([v, label]) => (
+            <button key={v} type="button" data-testid={`provider-${v}`} onClick={() => { const next = { ...data, telephony_provider: v }; setData(next); save(next); }}
+              className={`h-9 px-4 text-sm font-medium ${(data.telephony_provider || "3cx") === v ? "bg-primary text-primary-foreground" : "bg-card hover:bg-accent"}`}>{label}</button>
+          ))}
+        </div>
+      </Section>
+
       <Section icon={Phone} title="3CX Telephony (Call Control API)" badge={data.tcx_url ? "Configured" : "Not set"}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <F label="3CX Call Control URL" testid="tcx-url" value={data.tcx_url} onChange={set("tcx_url")} placeholder="https://yourpbx.3cx.co.za:5001" />
@@ -154,6 +175,21 @@ function IntegrationsTab() {
           <button data-testid="test-tcx-button" onClick={testTcx} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent">Test connection</button>
         </div>
         <p className="text-xs text-muted-foreground">Create an app in <b>3CX Admin → Integrations → API</b> with <b>Call Control Access</b> enabled (8SC+ Enterprise) and use its <b>Client ID</b> + <b>API Key</b>. Use the bare PBX FQDN (no <code>www.</code>). <b>For automated outbound (no human), set "Extension / DN" to a 3CX Route Point</b> assigned to this app — a normal user extension just rings itself instead of dialing out.</p>
+      </Section>
+
+      <Section icon={Phone} title="Twilio (Programmable Voice & SMS)" badge={twilioStatus ? (twilioStatus.valid ? "Valid ✓" : "Invalid ✗") : (data.twilio_account_sid ? "Key set" : "Not set")}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <F label="Account SID" testid="twilio-sid" value={data.twilio_account_sid} onChange={set("twilio_account_sid")} placeholder="AC…" />
+          <F label="Auth Token" testid="twilio-token" type="password" value={data.twilio_auth_token} onChange={set("twilio_auth_token")} placeholder="Your Twilio auth token" />
+          <F label="Twilio phone number" testid="twilio-number" value={data.twilio_phone_number} onChange={set("twilio_phone_number")} placeholder="+441234567890" />
+        </div>
+        <div className="flex items-center gap-3 mt-1 flex-wrap">
+          <Toggle testid="twilio-enabled" label="Enable Twilio live calling / SMS" checked={data.twilio_enabled} onChange={set("twilio_enabled")} />
+          <button data-testid="test-twilio-button" onClick={testTwilio} disabled={twilioBusy} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">{twilioBusy ? "Testing…" : "Test connection"}</button>
+          <button data-testid="save-twilio-button" onClick={() => save()} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent">Save</button>
+        </div>
+        {twilioStatus && <p className={`text-xs ${twilioStatus.valid ? "text-success" : "text-destructive"}`}>{twilioStatus.message}</p>}
+        <p className="text-xs text-muted-foreground">Find your <b>Account SID</b> &amp; <b>Auth Token</b> on the <b>Twilio Console dashboard</b>, and buy/verify a number under <b>Phone Numbers</b>. Select <b>Twilio</b> in “Telephony provider” above to make it the active caller.</p>
       </Section>
 
       <Section icon={MicrophoneStage} title="ElevenLabs Voice" badge={elevenStatus ? (elevenStatus.valid ? "Valid ✓" : "Invalid ✗") : (data.elevenlabs_api_key ? "Key set" : "Mock mode")}>

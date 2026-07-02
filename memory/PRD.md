@@ -156,6 +156,16 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - **#8 SMS section + SMS campaigns**: WhatsApp-like SMS page + 'New SMS campaign' button. (Live SMS best powered by Twilio — see #10.)
 - **#10 Twilio calling**: choose 3CX vs Twilio in Settings; test call/SMS/WhatsApp with real numbers + listen-in/manual-override. Creds go in Settings (user provided test SID/token/number). Needs integration_expert playbook + live verification.
 
+## Iteration 13 (2026-07-02) — Twilio config in Settings + telephony provider switch (#10 config part)
+- Settings → Integrations now has a **Telephony provider** switch (3cx | twilio) and a **Twilio** section: Account SID, Auth Token, Twilio phone number, "Enable Twilio live calling / SMS" toggle, **Test connection**, Save.
+- Backend: `IntegrationSettings` gained `telephony_provider`, `twilio_enabled`, `twilio_account_sid`, `twilio_auth_token`, `twilio_phone_number`. New `POST /settings/integrations/twilio/test` validates creds via httpx Basic-auth against `api.twilio.com/2010-04-01/Accounts/{sid}.json` (no SDK). Tested: real creds → valid ("My first Twilio account" active); bad token → invalid; save round-trips. Demo org reverted to 3cx, token not persisted.
+- NOT YET DONE: live Twilio call/SMS placement + the 3CX↔Twilio routing in the dial path, and listen-in/manual-override. (Only config + validation this iteration, per request.)
+
+## Still TODO
+- **#7** Email provider connection (Gmail + O365 OAuth) UI under Settings.
+- **#8** SMS section (WhatsApp-like) + New SMS campaign button (live SMS via Twilio).
+- **#10 (remainder)** Wire the dial path to honour `telephony_provider` (place real Twilio calls/SMS when selected + enabled); listen-in / manual-override.
+
 ## Backlog / Next (updated)
 - P1: Disable email send-now button while pending (avoid double-count); real Gmail/O365 OAuth + actual delivery when desired.
 - P1: Resolve known iter-3 sticky-LLM-key-on-provider-switch edge case.
