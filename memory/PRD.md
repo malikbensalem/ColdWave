@@ -108,6 +108,12 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - Owner: choose per-company feature access; Packages (prebuilt access tiers + price, per-company custom price, limits on calls/customers/features, time-limited access).
 - Credit/usage limits: stop campaign when AI/ElevenLabs/3CX credits exhausted + notify company users.
 
+## Iteration 9 (2026-07-02) — CRM 2.0 (multi-call history, ratings, transcripts)
+- **Backend**: `GET /contacts` now attaches per-lead `call_count`, `last_call_rating`, `last_call_summary`, `last_call_campaign`, `last_call_date`; `GET /contacts/{id}` returns full enriched call history (`campaign_name`, `rating`, `summary`, `next_action`) via `_enrich_call` + `_campaign_name_map`.
+- **Frontend (`Leads.jsx`)**: CRM table gained Email, Rating, Last-summary, Campaign, Last-call columns + per-lead call-count badge. Detail sheet shows full multi-call timeline (rating/sentiment/campaign/status/summary per call). New Summary and Transcript popups (Dialog) render the AI analysis + next action and the full agent/prospect transcript.
+- Verified via screenshot smoke test (admin@coldwave.ai): table columns, detail sheet, Summary popup (score 10 + next action), Transcript popup all render correctly.
+- SMS channel decision: user wants SMS delivered via **3CX** (not Twilio) when omnichannel schedulers are built.
+
 ## Backlog / Next (updated)
 - P1: Disable email send-now button while pending (avoid double-count); real Gmail/O365 OAuth + actual delivery when desired.
 - P1: Resolve known iter-3 sticky-LLM-key-on-provider-switch edge case.

@@ -19,6 +19,10 @@ function RatingBadge({ value }) {
 
 function fmtDate(d) { return d ? new Date(d).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—"; }
 
+function hasTranscript(call) {
+  return Array.isArray(call?.transcript) && call.transcript.length > 0;
+}
+
 export default function Leads() {
   const [contacts, setContacts] = useState([]);
   const [filter, setFilter] = useState("all");
@@ -26,6 +30,7 @@ export default function Leads() {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [dialing, setDialing] = useState(null);
+  const [viewer, setViewer] = useState(null); // { type: 'summary'|'transcript', call, name }
   const [form, setForm] = useState({ name: "", phone: "", email: "", company: "", notes: "", consent: false });
 
   const load = useCallback(async () => {
@@ -80,7 +85,7 @@ export default function Leads() {
     setDialing(contact.id);
     try {
       const { data } = await api.post("/calls/dial", { contact_id: contact.id });
-      toast.success(`Calling ${contact.name} — your 3CX extension will ring first, then connect the lead. (${data.status || "initiated"})`);
+      toast.success(`Calling ${contact.name} — your 3CX Route Point dials the lead directly. (${data.status || "initiated"})`);
       load();
     } catch (err) { toast.error(apiErr(err)); }
     finally { setDialing(null); }
@@ -91,7 +96,7 @@ export default function Leads() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="font-display font-bold text-3xl tracking-tight">CRM · Leads</h1>
-          <p className="text-sm text-muted-foreground mt-1">Track who you're calling and who responded positively.</p>
+          <p className="text-sm text-muted-foreground mt-1">Multi-call history, ratings, summaries &amp; transcripts per lead.</p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
@@ -134,16 +139,19 @@ export default function Leads() {
         </div>
       </div>
 
-      <div className="bg-card border border-border rounded-sm overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="bg-card border border-border rounded-sm overflow-x-auto">
+        <table className="w-full text-sm min-w-[1080px]">
           <thead>
             <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground border-b border-border bg-secondary/50">
               <th className="py-2.5 px-4 font-semibold">Name</th>
               <th className="py-2.5 px-4 font-semibold">Company</th>
               <th className="py-2.5 px-4 font-semibold">Phone</th>
+              <th className="py-2.5 px-4 font-semibold">Email</th>
               <th className="py-2.5 px-4 font-semibold">Status</th>
-              <th className="py-2.5 px-4 font-semibold">Sentiment</th>
-              <th className="py-2.5 px-4 font-semibold">Consent</th>
+              <th className="py-2.5 px-4 font-semibold">Rating</th>
+              <th className="py-2.5 px-4 font-semibold">Last summary</th>
+              <th className="py-2.5 px-4 font-semibold">Campaign</th>
+              <th className="py-2.5 px-4 font-semibold">Last call</th>
               <th className="py-2.5 px-4 font-semibold text-right">Actions</th>
             </tr>
           </thead>
@@ -151,13 +159,23 @@ export default function Leads() {
             {contacts.map((c) => {
               const callable = !c.opted_out && !c.do_not_call && c.status !== "opted_out" && c.status !== "dnc";
               return (
-              <tr key={c.id} data-testid={`lead-row-${c.id}`} onClick={() => openDetail(c.id)} className="border-b border-border/60 hover:bg-muted/50 cursor-pointer">
-                <td className="py-2.5 px-4 font-medium">{c.name}</td>
+              <tr key={c.id} data-testid={`lead-row-${c.id}`} onClick={() => openDetail(c.id)} className="border-b border-border/60 hover:bg-muted/50 cursor-pointer align-top">
+                <td className="py-2.5 px-4 font-medium">
+                  {c.name}
+                  {c.call_count > 0 && <span className="ml-1.5 text-[10px] tnum text-muted-foreground">({c.call_count} call{c.call_count > 1 ? "s" : ""})</span>}
+                </td>
                 <td className="py-2.5 px-4 text-muted-foreground">{c.company || "—"}</td>
                 <td className="py-2.5 px-4 tnum text-muted-foreground">{c.phone}</td>
+                <td className="py-2.5 px-4 text-muted-foreground truncate max-w-[160px]">{c.email || "—"}</td>
                 <td className="py-2.5 px-4"><StatusBadge status={c.status} /></td>
-                <td className="py-2.5 px-4"><SentimentBadge sentiment={c.sentiment} /></td>
-                <td className="py-2.5 px-4">{c.consent ? <span className="text-success text-xs font-semibold">Yes</span> : <span className="text-muted-foreground text-xs">No</span>}</td>
+                <td className="py-2.5 px-4"><RatingBadge value={c.last_call_rating} /></td>
+                <td className="py-2.5 px-4 text-muted-foreground max-w-[220px]">
+                  {c.last_call_summary
+                    ? <span className="line-clamp-2 text-xs">{c.last_call_summary}</span>
+                    : <span className="text-xs">—</span>}
+                </td>
+                <td className="py-2.5 px-4 text-muted-foreground text-xs">{c.last_call_campaign || "—"}</td>
+                <td className="py-2.5 px-4 text-muted-foreground text-xs whitespace-nowrap">{c.last_call_date ? fmtDate(c.last_call_date) : "—"}</td>
                 <td className="py-2.5 px-4 text-right">
                   <button data-testid={`call-lead-${c.id}`} disabled={!callable || dialing === c.id} onClick={(e) => dial(c, e)}
                     title={callable ? "Call via 3CX" : "Contact opted out / DNC"}
@@ -167,13 +185,14 @@ export default function Leads() {
                 </td>
               </tr>
             ); })}
-            {contacts.length === 0 && <tr><td colSpan={7} className="py-10 text-center text-muted-foreground text-sm">No leads found.</td></tr>}
+            {contacts.length === 0 && <tr><td colSpan={10} className="py-10 text-center text-muted-foreground text-sm">No leads found.</td></tr>}
           </tbody>
         </table>
       </div>
 
+      {/* Lead detail sheet */}
       <Sheet open={!!detail} onOpenChange={(o) => !o && setDetail(null)}>
-        <SheetContent className="w-full sm:max-w-md overflow-y-auto">
+        <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
           {detail && (
             <>
               <SheetHeader><SheetTitle className="font-display text-2xl">{detail.name}</SheetTitle></SheetHeader>
@@ -196,11 +215,34 @@ export default function Leads() {
                 </div>
 
                 <div>
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2 font-semibold">Call history</div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2 font-semibold">Call history ({detail.calls?.length || 0})</div>
                   {detail.calls?.length ? detail.calls.map((c) => (
-                    <div key={c.id} className="border border-border rounded-sm p-2.5 mb-2 text-xs">
-                      <div className="flex justify-between"><span className="font-medium">{c.voice_name || "AI Call"}</span><SentimentBadge sentiment={c.sentiment} /></div>
-                      <div className="text-muted-foreground mt-1">{c.analysis?.summary || c.status}</div>
+                    <div key={c.id} data-testid={`call-history-${c.id}`} className="border border-border rounded-sm p-3 mb-2 text-xs space-y-2">
+                      <div className="flex justify-between items-start gap-2">
+                        <div>
+                          <div className="font-medium">{c.voice_name || (c.type === "manual" ? "Manual 3CX call" : "AI Call")}</div>
+                          <div className="text-muted-foreground mt-0.5">{fmtDate(c.created_at)}</div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <RatingBadge value={c.rating} />
+                          <SentimentBadge sentiment={c.sentiment} />
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+                        <span>Campaign: <span className="text-foreground">{c.campaign_name || "—"}</span></span>
+                        <span>Status: <span className="text-foreground capitalize">{c.status || "—"}</span></span>
+                      </div>
+                      {c.summary && <div className="text-muted-foreground line-clamp-2">{c.summary}</div>}
+                      <div className="flex gap-2 pt-1">
+                        <button data-testid={`view-summary-${c.id}`} disabled={!c.summary} onClick={() => setViewer({ type: "summary", call: c, name: detail.name })}
+                          className="inline-flex items-center gap-1 h-7 px-2.5 rounded-sm border border-border text-[11px] font-medium hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed">
+                          <FileText size={13} /> Summary
+                        </button>
+                        <button data-testid={`view-transcript-${c.id}`} disabled={!hasTranscript(c)} onClick={() => setViewer({ type: "transcript", call: c, name: detail.name })}
+                          className="inline-flex items-center gap-1 h-7 px-2.5 rounded-sm border border-border text-[11px] font-medium hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed">
+                          <ChatText size={13} /> Transcript
+                        </button>
+                      </div>
                     </div>
                   )) : <div className="text-xs text-muted-foreground">No calls logged.</div>}
                 </div>
@@ -218,6 +260,51 @@ export default function Leads() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Summary / Transcript viewer */}
+      <Dialog open={!!viewer} onOpenChange={(o) => !o && setViewer(null)}>
+        <DialogContent className="max-w-2xl" data-testid="call-viewer-dialog">
+          {viewer && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="font-display flex items-center gap-2">
+                  {viewer.type === "summary" ? <FileText size={18} /> : <ChatText size={18} />}
+                  {viewer.type === "summary" ? "Call summary" : "Call transcript"} · {viewer.name}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="text-xs text-muted-foreground -mt-1 mb-1">
+                {fmtDate(viewer.call.created_at)} · {viewer.call.campaign_name || "—"}
+              </div>
+              {viewer.type === "summary" ? (
+                <div className="space-y-3 text-sm max-h-[60vh] overflow-y-auto">
+                  <div className="flex items-center gap-3">
+                    <RatingBadge value={viewer.call.rating} />
+                    <SentimentBadge sentiment={viewer.call.sentiment} />
+                  </div>
+                  <p className="whitespace-pre-wrap leading-relaxed">{viewer.call.summary || "No summary available."}</p>
+                  {viewer.call.next_action && (
+                    <div className="border-t border-border pt-3">
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-1">Next action</div>
+                      <p className="text-sm">{viewer.call.next_action}</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+                  {hasTranscript(viewer.call) ? viewer.call.transcript.map((t, i) => (
+                    <div key={i} className={`flex ${t.role === "agent" ? "justify-start" : "justify-end"}`}>
+                      <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${t.role === "agent" ? "bg-secondary" : "bg-primary text-primary-foreground"}`}>
+                        <div className="text-[10px] uppercase tracking-wide opacity-70 mb-0.5">{t.role === "agent" ? "AI Agent" : "Prospect"}</div>
+                        {t.content}
+                      </div>
+                    </div>
+                  )) : <p className="text-sm text-muted-foreground">No transcript recorded for this call.</p>}
+                </div>
+              )}
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
