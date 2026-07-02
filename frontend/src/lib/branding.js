@@ -43,4 +43,7 @@ export function applyBranding(branding) {
   if (!branding) return;
   applyPrimaryColor(branding.primary_color);
   if (branding.brand_name) document.title = `${branding.brand_name} · Powered by ColdWave`;
+  else document.title = "ColdWave · AI Cold Calling";
+  // Notify React consumers (e.g. Layout sidebar) so brand name/logo update without a reload.
+  try { window.dispatchEvent(new CustomEvent("coldwave:branding", { detail: branding })); } catch { /* noop */ }
 }

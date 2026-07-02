@@ -114,6 +114,20 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - Verified via screenshot smoke test (admin@coldwave.ai): table columns, detail sheet, Summary popup (score 10 + next action), Transcript popup all render correctly.
 - SMS channel decision: user wants SMS delivered via **3CX** (not Twilio) when omnichannel schedulers are built.
 
+## Iteration 10 (2026-07-02) — Campaigns 2.0 + P2 batch (voice speed, editable scripts, white-label)
+- **Campaigns 2.0**: campaigns now carry an `audience` CRM filter (all/new/contacted/callback/positive/consented) + schedule_type. New endpoints: `GET /campaigns/{id}/analytics` (times_used, avg_rating, positive_rate, sentiment), `GET /campaigns/{id}/queue` (contacted[], upcoming[], next), `POST /campaigns/{id}/dial-next` (live 3CX dial of next queued contact, logged against the campaign). Frontend: campaign cards show audience badge + metric grid; a Queue sheet shows Contacted/Upcoming counts, Next-in-queue with Dial-next, and Called/Upcoming tabs. Tested 100% (iteration_9).
+- **Voice speed control**: per-voice speaking speed (0.7–1.2×) stored in org voice_characteristics, applied to ElevenLabs VoiceSettings (safe fallback for older SDK). Slider in Voices → edit dialog.
+- **Editable scripts + in-editor mode toggle**: script cards have an edit pencil → dialog to edit name/content/persona and toggle line_by_line ↔ personality (PUT /scripts/{id}).
+- **Smarter line-by-line**: agent_reply line-by-line prompt now instructs the AI to never read bracket stage labels / speaker labels / placeholder names; scripted-opening extraction strips leading `[LABEL]`.
+- **White-labelling**: org brand_name/logo_url/primary_color; `GET /settings/branding`; Settings → White-label tab (colour picker + live preview + Reset). Layout applies branding app-wide (CSS var primary colour, brand name, logo, retained "Powered by ColdWave" footer). Live-update via `coldwave:branding` CustomEvent (fixed reload bug). Tested (iteration_10).
+- Cleanup: demo org branding reset to defaults; george voice speed reset to 1.0.
+
+## Backlog / Next (updated 2026-07-02) — remaining P1/P2
+- **P1 — Omnichannel schedulers**: Email/WhatsApp/SMS (SMS via **3CX**, per user) at parity with call campaigns (analytics, usage, contacted lists); AI auto-reply with mandatory human approval queue; per-channel AI blueprints (call/email/whatsapp/sms).
+- **P1 — Live call controls**: listen-in, whisper/barge, human take-over on live 3CX calls (requires live 3CX participant/streaming APIs — needs a live PBX to verify).
+- **P2 — Packages/tiers & credits**: owner-created tiers (feature access + limits on calls/customers), per-company pricing, credit tracking that auto-stops campaigns + notifies users when AI/ElevenLabs/3CX credits run out.
+- **Refactor**: split the ~900-line `routes.py` into contacts/calls/campaigns/settings routers.
+
 ## Backlog / Next (updated)
 - P1: Disable email send-now button while pending (avoid double-count); real Gmail/O365 OAuth + actual delivery when desired.
 - P1: Resolve known iter-3 sticky-LLM-key-on-provider-switch edge case.

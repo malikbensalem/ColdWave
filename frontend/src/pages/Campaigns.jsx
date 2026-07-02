@@ -164,9 +164,9 @@ function CampaignQueue({ campaign, onClose, onChanged }) {
   return (
     <Sheet open={!!campaign} onOpenChange={(o) => !o && onClose()}>
       <SheetContent className="w-full sm:max-w-lg overflow-y-auto" data-testid="campaign-queue-sheet">
+        <SheetHeader><SheetTitle className="font-display text-2xl">{campaign?.name || "Campaign"}</SheetTitle></SheetHeader>
         {campaign && data && (
           <>
-            <SheetHeader><SheetTitle className="font-display text-2xl">{campaign.name}</SheetTitle></SheetHeader>
             <div className="mt-4 space-y-4">
               <div className="grid grid-cols-2 gap-2">
                 <div className="bg-secondary/50 rounded-sm p-3"><div className="text-2xl font-bold tnum">{data.contacted_count}</div><div className="text-xs text-muted-foreground">Contacted</div></div>

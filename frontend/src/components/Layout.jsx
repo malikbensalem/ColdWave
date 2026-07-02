@@ -31,6 +31,12 @@ export default function Layout() {
     api.get("/settings/branding").then((r) => { setBranding(r.data); applyBranding(r.data); }).catch(() => {});
   }, [user?.org_id]);
 
+  useEffect(() => {
+    const onBranding = (e) => setBranding(e.detail);
+    window.addEventListener("coldwave:branding", onBranding);
+    return () => window.removeEventListener("coldwave:branding", onBranding);
+  }, []);
+
   const brandName = branding?.brand_name || "ColdWave";
   const isWhiteLabelled = !!branding?.brand_name;
 
