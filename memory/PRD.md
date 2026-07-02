@@ -141,6 +141,21 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - **P8 — Refactor routes.py + a11y polish**.
 - **P9 — Test vs Live toggle**: messaging side done (simulate + approve→send). Call side (real test call vs live-with-listen) folds into P4.
 
+## Iteration 12 (2026-07-02) — big batch: local-run fix, per-channel blueprints, owner moderation, opening, voice, specific clients
+- **#1 Local run fix**: `emergentintegrations` made OPTIONAL (try/except import) with a **litellm** fallback that uses the workspace's own provider key (Settings → AI) when the Emergent package/key is unavailable. Removed `emergentintegrations` + the litellm wheel-URL from `requirements.txt` (now `litellm==1.80.0`); start.sh/start.bat install emergentintegrations as a **separate non-fatal** step. `pip install -r requirements.txt` now works locally.
+- **#2 Per-channel AI blueprints**: blueprints have a `channel` (global/call/whatsapp/sms/email) selectable in Platform Admin; each business gets **3 assignable blueprints** (call/whatsapp/sms) via `PUT /admin/businesses/{oid}/channel-blueprint`. Resolution wired into `attach_system_prefix(org, channel)` (calls) and `_channel_system_prompt` (messaging).
+- **#3 Owner cross-org moderation**: `POST /admin/users/{id}/ban|unban`, `PUT /admin/users/{id}/role`, `POST /admin/businesses/{oid}/ban|unban` (business ban cascades to block its non-owner users, reusing the existing banned-user login gate). UI: role dropdown + Ban toggle per user; Suspend/Reinstate per business. (Admins already ban/role within own org — org-scoped.)
+- **#4 Admin roles**: already available via RolesManager (business scope in Settings, platform defaults in Platform Admin → Default Roles).
+- **#5 Campaign specific clients**: campaigns accept `contact_ids` (audience='specific'); queue targets exactly those clients. UI: searchable contact checklist in New Campaign.
+- **#6 Test-call opening**: now derives from the script/blueprint — line-by-line uses the script's first line; **personality/no-script generates a persona+blueprint opening via LLM** (no more hardcoded 'Hello, this is your AI assistant…'). TestCalls: after End, a 'New Test Call' button appears and input disables so you can start fresh.
+- **#9 Voice controls**: per-voice **stability + style + speed** sliders and a **Dynamic delivery** toggle (AI varies all three by utterance context via `_dynamic_voice_params`). No pitch (ElevenLabs doesn't expose it). Applied in `generate_tts`.
+- Tested: iteration_11.json — backend 19/19, frontend all flows PASS, demo data restored.
+
+## Still TODO (from the user's 10-item list)
+- **#7 Email provider connection → Settings**: move Email (Gmail + O365 OAuth) connect UI into Settings; user sets it up there. (Real send needs OAuth app.)
+- **#8 SMS section + SMS campaigns**: WhatsApp-like SMS page + 'New SMS campaign' button. (Live SMS best powered by Twilio — see #10.)
+- **#10 Twilio calling**: choose 3CX vs Twilio in Settings; test call/SMS/WhatsApp with real numbers + listen-in/manual-override. Creds go in Settings (user provided test SID/token/number). Needs integration_expert playbook + live verification.
+
 ## Backlog / Next (updated)
 - P1: Disable email send-now button while pending (avoid double-count); real Gmail/O365 OAuth + actual delivery when desired.
 - P1: Resolve known iter-3 sticky-LLM-key-on-provider-switch edge case.
