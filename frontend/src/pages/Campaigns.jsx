@@ -228,6 +228,8 @@ function ScriptsTab() {
   const [form, setForm] = useState({ name: "", content: "", objective: "", personality: "" });
   const [gen, setGen] = useState({ product: "", audience: "", objective: "", tone: "professional and friendly", personality: "" });
   const [genBusy, setGenBusy] = useState(false);
+  const [editItem, setEditItem] = useState(null);
+  const [editForm, setEditForm] = useState({ name: "", content: "", personality: "", script_type: "line_by_line" });
 
   const load = useCallback(async () => { const { data } = await api.get("/scripts"); setItems(data); }, []);
   useEffect(() => { load(); }, [load]);
@@ -255,7 +257,21 @@ function ScriptsTab() {
   };
   const remove = async (id) => { await api.delete(`/scripts/${id}`); load(); };
 
+  const openEdit = (s) => {
+    setEditForm({ name: s.name, content: s.content || "", personality: s.personality || "", script_type: s.script_type || "line_by_line" });
+    setEditItem(s);
+  };
+  const saveEdit = async () => {
+    try {
+      await api.put(`/scripts/${editItem.id}`, editForm);
+      toast.success("Script updated");
+      setEditItem(null);
+      load();
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+
   const isPersona = scriptType === "personality";
+  const editIsPersona = editForm.script_type === "personality";
 
   return (
     <div className="space-y-4">
@@ -316,13 +332,51 @@ function ScriptsTab() {
                 <h3 className="font-display font-semibold">{s.name}</h3>
                 <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 bg-accent rounded-sm font-semibold">{s.script_type === "personality" ? "Personality" : "Line-by-line"}</span>
               </div>
-              <button onClick={() => remove(s.id)} className="text-muted-foreground hover:text-destructive"><Trash size={15} /></button>
+              <div className="flex gap-1">
+                <button data-testid={`edit-script-${s.id}`} onClick={() => openEdit(s)} className="text-muted-foreground hover:text-primary" title="Edit script"><PencilSimple size={15} /></button>
+                <button onClick={() => remove(s.id)} className="text-muted-foreground hover:text-destructive"><Trash size={15} /></button>
+              </div>
             </div>
             <pre className="mt-2 text-[11px] font-mono text-muted-foreground whitespace-pre-wrap line-clamp-6 max-h-32 overflow-hidden">{s.script_type === "personality" ? s.personality : s.content}</pre>
           </div>
         ))}
         {items.length === 0 && <Empty text="No scripts yet — generate one with AI." />}
       </div>
+
+      <Dialog open={!!editItem} onOpenChange={(o) => !o && setEditItem(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader><DialogTitle className="font-display">Edit script</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" data-testid="edit-script-type-line" onClick={() => setEditForm({ ...editForm, script_type: "line_by_line" })}
+                className={`text-left p-2.5 rounded-sm border text-sm ${!editIsPersona ? "border-primary bg-primary/5" : "border-border hover:bg-accent"}`}>
+                <div className="font-semibold">Line-by-line script</div>
+                <div className="text-xs text-muted-foreground">Follows exact lines; answers off-script from company overview.</div>
+              </button>
+              <button type="button" data-testid="edit-script-type-personality" onClick={() => setEditForm({ ...editForm, script_type: "personality" })}
+                className={`text-left p-2.5 rounded-sm border text-sm ${editIsPersona ? "border-primary bg-primary/5" : "border-border hover:bg-accent"}`}>
+                <div className="font-semibold">Personality-driven</div>
+                <div className="text-xs text-muted-foreground">Agent embodies a persona and improvises.</div>
+              </button>
+            </div>
+            <Field label="Script name" testid="edit-script-name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+            {editIsPersona ? (
+              <div>
+                <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Persona &amp; behaviour</label>
+                <textarea data-testid="edit-script-personality" value={editForm.personality} onChange={(e) => setEditForm({ ...editForm, personality: e.target.value })} rows={10}
+                  className="mt-1 w-full rounded-sm border border-input bg-card p-2.5 text-xs font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+              </div>
+            ) : (
+              <div>
+                <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Script (line by line)</label>
+                <textarea data-testid="edit-script-content" value={editForm.content} onChange={(e) => setEditForm({ ...editForm, content: e.target.value })} rows={10}
+                  className="mt-1 w-full rounded-sm border border-input bg-card p-2.5 text-xs font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+              </div>
+            )}
+          </div>
+          <DialogFooter><button data-testid="save-edit-script" onClick={saveEdit} className="h-10 px-4 bg-primary text-primary-foreground rounded-sm text-sm font-medium">Save changes</button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -335,7 +389,7 @@ function VoicesTab() {
   const [playing, setPlaying] = useState(null);
   const [sample, setSample] = useState("Hello, this is Alex calling from ColdWave. Have I caught you at a good time?");
   const [editVoice, setEditVoice] = useState(null);
-  const [editForm, setEditForm] = useState({ name: "", persona: "" });
+  const [editForm, setEditForm] = useState({ name: "", persona: "", speed: 1.0 });
 
   const load = useCallback(async () => {
     const r = await api.get("/voices");
@@ -364,7 +418,7 @@ function VoicesTab() {
     } catch (e) { toast.error("Preview failed"); setPlaying(null); }
   };
 
-  const openEdit = (v) => { setEditForm({ name: v.display_name || v.name, persona: v.persona || "" }); setEditVoice(v); };
+  const openEdit = (v) => { setEditForm({ name: v.display_name || v.name, persona: v.persona || "", speed: v.speed || 1.0 }); setEditVoice(v); };
   const saveEdit = async () => {
     try {
       await api.put(`/voices/${editVoice.id}/characteristics`, editForm);
@@ -424,6 +478,17 @@ function VoicesTab() {
                 placeholder="e.g. A friendly account executive from the London sales team who is helpful and concise."
                 className="mt-1 w-full rounded-sm border border-input bg-card p-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
               <p className="text-xs text-muted-foreground mt-1">The agent uses this so it knows who it is if a prospect asks during a call.</p>
+            </div>
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Speaking speed</label>
+                <span className="text-xs font-semibold tnum" data-testid="edit-voice-speed-value">{Number(editForm.speed).toFixed(2)}×</span>
+              </div>
+              <input type="range" min="0.7" max="1.2" step="0.05" data-testid="edit-voice-speed"
+                value={editForm.speed} onChange={(e) => setEditForm({ ...editForm, speed: parseFloat(e.target.value) })}
+                className="mt-2 w-full accent-primary" />
+              <div className="flex justify-between text-[10px] text-muted-foreground mt-0.5"><span>Slower (0.7×)</span><span>Normal</span><span>Faster (1.2×)</span></div>
+              <p className="text-xs text-muted-foreground mt-1">Applies to ElevenLabs studio audio. Note: extreme speeds can reduce naturalness; 0.9–1.1× is recommended.</p>
             </div>
           </div>
           <DialogFooter><button data-testid="save-voice-characteristics" onClick={saveEdit} className="h-10 px-4 bg-primary text-primary-foreground rounded-sm text-sm font-medium">Save</button></DialogFooter>

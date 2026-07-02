@@ -435,7 +435,8 @@ async def list_voices(user: dict = Depends(get_current_user)):
             **v,
             "display_name": ov.get("name") or v["name"],
             "persona": ov.get("persona") or v.get("persona", ""),
-            "customized": bool(ov.get("name") or ov.get("persona")),
+            "speed": ov.get("speed", 1.0),
+            "customized": bool(ov.get("name") or ov.get("persona") or ov.get("speed")),
         })
     return {"voices": voices, "elevenlabs_enabled": enabled}
 
@@ -451,6 +452,8 @@ async def update_voice_characteristics(voice_id: str, req: VoiceCharacteristicsU
         cur["name"] = req.name
     if req.persona is not None:
         cur["persona"] = req.persona
+    if req.speed is not None:
+        cur["speed"] = max(0.7, min(1.2, float(req.speed)))
     chars[voice_id] = cur
     await db.organizations.update_one({"id": user["org_id"]}, {"$set": {"voice_characteristics": chars}})
     await audit(user["org_id"], user, "voice_characteristics_update", voice_id, entity="voice", entity_id=voice_id, after=cur)
@@ -543,11 +546,14 @@ async def start_test_call(req: TestCallStartRequest, user: dict = Depends(get_cu
         if contact and contact.get("opted_out"):
             raise HTTPException(403, "Contact has opted out / is on the Do-Not-Call list.")
 
-    # opening line — scripted (default) or KB-guided
+    # opening line — scripted (default) or KB-guided.
+    # Scripts use stage labels like "[OPENING] Hi, this is Alex…" — strip the label, keep the words.
+    import re as _re
     scripted_opening = "Hello, this is your AI assistant calling. Do you have a quick moment?"
     for line in script_content.split("\n"):
-        if line.strip() and "[" not in line:
-            scripted_opening = line.strip()
+        stripped = _re.sub(r"^\s*\[[^\]]*\]\s*", "", line).strip()
+        if stripped:
+            scripted_opening = stripped
             break
 
     opening = scripted_opening
@@ -741,6 +747,16 @@ async def list_erasures(user: dict = Depends(get_current_user)):
 @router.get("/settings/org")
 async def get_org(user: dict = Depends(get_current_user)):
     return await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+
+
+@router.get("/settings/branding")
+async def get_branding(user: dict = Depends(get_current_user)):
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0}) or {}
+    return {
+        "brand_name": org.get("brand_name", ""),
+        "logo_url": org.get("logo_url", ""),
+        "primary_color": org.get("primary_color", ""),
+    }
 
 
 @router.put("/settings/org")

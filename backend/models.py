@@ -122,6 +122,9 @@ class OrgUpdateRequest(BaseModel):
     opening_creativity: Optional[str] = None   # "low" | "medium" | "high"
     opening_max_length: Optional[int] = None
     ai_system_prompt: Optional[str] = None     # org-level extension to the global AI prompt
+    brand_name: Optional[str] = None           # white-label display name
+    logo_url: Optional[str] = None             # white-label logo URL
+    primary_color: Optional[str] = None        # white-label primary colour (hex)
 
 
 # ---------- CRM ----------
@@ -239,6 +242,7 @@ class KBToggleRequest(BaseModel):
 class VoiceCharacteristicsUpdate(BaseModel):
     name: Optional[str] = None
     persona: Optional[str] = None
+    speed: Optional[float] = None  # 0.7 (slower) – 1.2 (faster); 1.0 = normal
 
 
 # ---------- Impersonation ----------

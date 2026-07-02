@@ -205,6 +205,10 @@ async def agent_reply(script: str, history: list, prospect_message: str, session
             "You are an AI outbound sales agent on a live UK cold call. You follow the provided SCRIPT "
             "line by line, but adapt naturally. If the prospect asks something the script does NOT cover, "
             "answer it accurately using the COMPANY OVERVIEW (never invent facts). "
+            "IMPORTANT — the script contains stage labels in square brackets like [OPENING], [HOOK], "
+            "[CLOSE], and sometimes speaker/role labels or the respondent's placeholder name. NEVER read "
+            "these out loud. Speak ONLY the natural spoken words a real person would say; skip any "
+            "bracketed labels, section titles, or placeholder names entirely. "
             f"{compliance}\n\nSCRIPT:\n{script}"
             + _company_block(company_overview)
         )
@@ -289,12 +293,24 @@ async def generate_tts(org: dict, voice_id: str, text: str) -> dict:
     try:
         from elevenlabs import ElevenLabs, VoiceSettings
         client = ElevenLabs(api_key=key)
-        settings = VoiceSettings(
+        vs_kwargs = dict(
             stability=float(integ.get("elevenlabs_stability", 0.5)),
             similarity_boost=float(integ.get("elevenlabs_similarity", 0.75)),
             style=float(integ.get("elevenlabs_style", 0.0)),
             use_speaker_boost=True,
         )
+        # Per-voice speaking speed (org override). ElevenLabs supports 0.7–1.2.
+        speed = (org or {}).get("voice_characteristics", {}).get(voice_id, {}).get("speed")
+        if speed is not None:
+            try:
+                vs_kwargs["speed"] = max(0.7, min(1.2, float(speed)))
+            except (TypeError, ValueError):
+                pass
+        try:
+            settings = VoiceSettings(**vs_kwargs)
+        except TypeError:
+            vs_kwargs.pop("speed", None)  # older SDK without speed support
+            settings = VoiceSettings(**vs_kwargs)
         model_id = integ.get("elevenlabs_model", "eleven_multilingual_v2")
         audio = client.text_to_speech.convert(
             text=text[:600], voice_id=voice["elevenlabs_voice_id"],

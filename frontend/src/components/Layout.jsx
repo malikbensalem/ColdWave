@@ -1,6 +1,9 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
+import api from "../lib/api";
+import { applyBranding } from "../lib/branding";
 import {
   ChartLineUp, Users, Megaphone, PhoneCall, ShieldCheck, Gear, SignOut, Waveform, WhatsappLogo, EnvelopeSimple, Crown, UserSwitch,
 } from "@phosphor-icons/react";
@@ -19,9 +22,17 @@ const NAV = [
 export default function Layout() {
   const { user, logout, stopImpersonation, can, hasCap } = useAuth();
   const navigate = useNavigate();
+  const [branding, setBranding] = useState(null);
   const showPlatformAdmin = hasCap("view_all_businesses");
   // Settings is visible if the user can access any settings-related area.
   const settingsVisible = ["integrations", "users", "roles", "audit"].some((s) => can(s, "read")) || true;
+
+  useEffect(() => {
+    api.get("/settings/branding").then((r) => { setBranding(r.data); applyBranding(r.data); }).catch(() => {});
+  }, [user?.org_id]);
+
+  const brandName = branding?.brand_name || "ColdWave";
+  const isWhiteLabelled = !!branding?.brand_name;
 
   const handleStop = async () => {
     try { await stopImpersonation(); toast.success("Returned to your account"); navigate("/admin"); }
@@ -34,11 +45,15 @@ export default function Layout() {
     <div className="w-full h-screen flex overflow-hidden bg-background">
       <aside className="w-64 flex-shrink-0 border-r border-border bg-card flex flex-col">
         <div className="h-16 flex items-center gap-2.5 px-5 border-b border-border">
-          <div className="h-8 w-8 bg-primary rounded-sm flex items-center justify-center">
-            <Waveform size={20} weight="bold" className="text-primary-foreground" />
-          </div>
+          {branding?.logo_url ? (
+            <img src={branding.logo_url} alt={brandName} data-testid="brand-logo" className="h-8 w-8 rounded-sm object-cover" />
+          ) : (
+            <div className="h-8 w-8 bg-primary rounded-sm flex items-center justify-center">
+              <Waveform size={20} weight="bold" className="text-primary-foreground" />
+            </div>
+          )}
           <div className="leading-none">
-            <div className="font-display font-bold text-lg tracking-tight">ColdWave</div>
+            <div className="font-display font-bold text-lg tracking-tight" data-testid="brand-name">{brandName}</div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground mt-0.5">AI Calling</div>
           </div>
         </div>
@@ -90,6 +105,9 @@ export default function Layout() {
               <SignOut size={18} weight="bold" />
             </button>
           </div>
+          {isWhiteLabelled && (
+            <div data-testid="powered-by-coldwave" className="px-2 pt-1 text-[10px] text-muted-foreground/70 tracking-wide">Powered by ColdWave</div>
+          )}
         </div>
       </aside>
 

@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 10 — verified new P2 features: (1) voice speed control, (2) editable scripts with in-editor mode toggle, (3) white-label branding, and (4) regression on Dashboard/Leads/Campaigns. Frontend testing only, per request. Two of three P2 features PASS end-to-end. White-label save has a live-update BUG: the sidebar brand-name and 'Powered by ColdWave' footer do NOT update until a full page reload — backend persistence, primary-colour re-theme, and reset flow all work correctly. Backend was cross-checked via GET /api/settings/branding (both after save and after reset) and returned the correct values. Demo org branding was RESET to defaults at end of test, per safety note. No 3CX call actions were triggered.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Settings → WhiteLabelTab / Layout (sidebar)",
+        "issue": "After clicking Save branding the primary colour re-themes app-wide immediately, but the sidebar brand-name still shows 'ColdWave' and the 'powered-by-coldwave' footer stays hidden until the user refreshes the browser. On reload both correctly reflect the saved brand_name ('AcmeQA Outreach') and the footer appears. Root cause: Layout.jsx loads branding once via useEffect keyed on user.org_id and stores it in local state; Settings.jsx save handler only calls applyBranding() (which mutates CSS variables + document.title) — it does not notify Layout to refetch or update its `branding` state, and brandName / isWhiteLabelled are derived from that Layout-local state, not from CSS vars.",
+        "selector": "[data-testid=\"brand-name\"], [data-testid=\"powered-by-coldwave\"]",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_passing": [
+    "Voice speed control: opening edit-voice-<id> shows 'Speaking speed' with a range slider (edit-voice-speed) and live label (edit-voice-speed-value) starting at 1.00×. Moving slider to 1.10, clicking save-voice-characteristics persists — reopening the dialog shows 1.10× and voice remains in the list. (voice_id=george)",
+    "Editable scripts: script-card exposes edit-script-<id> pencil. Clicking opens the Edit script dialog with both mode buttons (edit-script-type-line / edit-script-type-personality). Toggling to personality hides edit-script-content and shows edit-script-personality; toggling back reverses it. Editing edit-script-name + save-edit-script persists and the card reflects the new name (script_id=script_6661bb8ac5d44197). Restored original name 'SaaS Demo Booking Script' with script_type=line_by_line after test. Note: card mode badge uses CSS uppercase — text substring 'Line-by-line' looks like 'LINE-BY-LINE' in the rendered DOM (case-insensitive match passes).",
+    "White-label — inputs & preview: tab-whitelabel is visible for admin; brand-name-input, brand-logo-input, brand-color-input, brand-preview, save-brand-button, reset-brand-button are all rendered. Live preview inside brand-preview updates as fields change.",
+    "White-label — primary colour: setting #ff6600 and Save immediately updates --primary CSS variable to '24 100% 50%' — all Tailwind bg-primary / ring components re-theme instantly.",
+    "White-label — backend persistence: GET /api/settings/branding returns {brand_name:'AcmeQA Outreach', logo_url:'', primary_color:'#ff6600'} after save (200 OK).",
+    "White-label — after a full page reload: sidebar brand-name becomes 'AcmeQA Outreach', data-testid='powered-by-coldwave' footer appears in the sidebar.",
+    "White-label — reset: clicking reset-brand-button + reload restores sidebar to 'ColdWave', removes powered-by-coldwave, and GET /api/settings/branding returns {brand_name:'', logo_url:'', primary_color:''}. Demo org is clean.",
+    "Regression: Dashboard, /leads, /campaigns all load with no console pageerrors and no error nodes on the page. Opening campaign-queue-sheet still works and shows Contacted/Upcoming tabs."
+  ],
+  "safety_notes": [
+    "Live 3CX warning respected: NO clicks on Call, campaign-dial-next, call-lead-<id>, or call-lead-detail-button. No POST /api/campaigns/{id}/dial-next or /api/calls/dial was issued.",
+    "Cleanup performed: (a) branding fully reset to defaults on the demo org, (b) 'SaaS Demo Booking Script' name restored to original and script_type kept at line_by_line, (c) voice 'george' speed left at 1.10 (customised=true) — this is a benign persisted setting on a mock voice; if strict cleanup is required the main agent can PUT /api/voices/george/characteristics with {speed:1.0}. No campaigns / leads / calls were created."
+  ],
+  "test_report_links": [
+    "Inline Playwright scripts executed via mcp_browser_automation (no persistent test file — pure UI flow validation). Prior regression backend suite at /app/backend/tests/test_iteration9_crm_campaigns.py remains valid."
+  ],
+  "action_items": [
+    "Fix live-update of white-label branding in Layout.jsx: either (a) have applyBranding() in /app/frontend/src/lib/branding.js emit a window CustomEvent('coldwave:branding-updated', { detail }) that Layout listens to and setBranding() from, or (b) lift branding into a React context (BrandingProvider) that both Settings.WhiteLabelTab.save and Layout consume, or (c) after PUT /settings/org in WhiteLabelTab.save trigger a hard event that Layout picks up. Currently the sidebar brand-name and powered-by-coldwave only update after a full page reload — this fails the review-request expectation 'applies immediately'.",
+    "Optional strict cleanup: reset voice 'george' speed back to 1.0 on the demo org (test left it at 1.10)."
+  ],
+  "critical_code_review_comments": [
+    "Layout.jsx line 30-32: branding is fetched only on mount (deps [user?.org_id]). There's no subscription to a global branding change, so the UI diverges from persisted state until reload — this is the root cause of the sidebar/powered-by bug above.",
+    "branding.js applyBranding() side-effects the DOM (CSS vars + document.title) but does not communicate back to React state — split responsibility. Consider dispatching a CustomEvent so consumers can re-render.",
+    "Settings.jsx WhiteLabelTab.save() DOES re-GET /settings/branding and calls applyBranding, but only inside its own scope; the Layout instance never learns of the update.",
+    "WhiteLabelTab.reset() calls applyPrimaryColor(null) but the CSS custom property is set on document.documentElement inline; on reset it correctly removes the property so the fallback (from tailwind theme) kicks in — verified in test: --primary reverted from '24 100% 50%' back to '223 100% 33%'.",
+    "VoicesTab and ScriptsTab edit dialogs are clean, well-scoped, and have all required data-testid attributes (edit-voice-speed, edit-voice-speed-value, save-voice-characteristics, edit-script-type-line/personality, edit-script-content, edit-script-personality, edit-script-name, save-edit-script). Speed slider correctly clamps to 0.7–1.2 via the input attrs.",
+    "Radix Dialog warnings in console: 'Missing `Description` or `aria-describedby={undefined}` for {DialogContent}' fire on every dialog. Accessibility polish — non-blocking but should be addressed by adding <DialogDescription> or aria-describedby.",
+    "One louder Radix console error also fired when opening the campaign-queue-sheet: '`DialogContent` requires a `DialogTitle` for the component to be accessible for screen reader users.' — a11y regression to fix in the queue sheet."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only run — backend verified indirectly via GET /api/settings/branding)", "frontend": "3/4 features fully pass; white-label live-update fails (backend/reset/persistence pass) → ~85% of expected flows"},
+  "test_credentials": "admin@coldwave.ai / Admin123!",
+  "seed_data_creation": "No new seed data. Temporarily saved brand_name='AcmeQA Outreach' + primary_color='#ff6600' then RESET. Temporarily renamed 'SaaS Demo Booking Script' → '… (QA)' then RESTORED. Voice george.speed left at 1.10 (mock voice, harmless).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "P2 test selectors that resolve correctly: edit-voice-<id>, edit-voice-speed, edit-voice-speed-value, save-voice-characteristics, edit-script-<id>, edit-script-type-line, edit-script-type-personality, edit-script-name, edit-script-content, edit-script-personality, save-edit-script, tab-whitelabel, brand-name-input, brand-logo-input, brand-color-input, brand-preview, save-brand-button, reset-brand-button, brand-name (sidebar), powered-by-coldwave. After a white-label fix ship: re-run the ‘AFTER SAVE (no reload)’ assertion — currently it returns 'ColdWave' + powered=False; expected is the new brand + powered=True without reload. Voice speed test uses the seeded voice id 'george'. Live 3CX is enabled on the demo org — do NOT trigger dial/call buttons.",
+  "rca of the issue": "White-label live-update bug: Layout.jsx maintains its own `branding` React state populated once by GET /api/settings/branding in a mount-time useEffect. The Save button in Settings.WhiteLabelTab persists the change server-side and calls applyBranding() (which only sets --primary/--ring/--sidebar-primary CSS vars and document.title). Because Layout's `branding` state is never updated, `brandName = branding?.brand_name || 'ColdWave'` remains 'ColdWave' and `isWhiteLabelled = !!branding?.brand_name` stays false — hence the sidebar text and the powered-by-coldwave footer only reflect the change after a fresh mount (page reload). Reproduction: login as admin → Settings → White-label → set brand-name + colour → Save → observe sidebar & footer unchanged → reload → they update. Mitigation options: dispatch a global CustomEvent from applyBranding and subscribe in Layout, or move branding into a shared React context/provider consumed by both Layout and WhiteLabelTab."
+}

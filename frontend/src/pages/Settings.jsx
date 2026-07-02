@@ -3,11 +3,12 @@ import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import api, { apiErr } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+import { applyBranding, applyPrimaryColor } from "../lib/branding";
 import RolesManager from "../components/RolesManager";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import {
-  Plug, Buildings, UsersThree, BookOpen, FloppyDisk, Plus, Trash, Phone, MicrophoneStage, Brain, MicrosoftOutlookLogo, CheckCircle, Key, WhatsappLogo, Sparkle, ListMagnifyingGlass, UploadSimple, BookBookmark, PencilSimple, ShieldStar, UserSwitch, Prohibit,
+  Plug, Buildings, UsersThree, BookOpen, FloppyDisk, Plus, Trash, Phone, MicrophoneStage, Brain, MicrosoftOutlookLogo, CheckCircle, Key, WhatsappLogo, Sparkle, ListMagnifyingGlass, UploadSimple, BookBookmark, PencilSimple, ShieldStar, UserSwitch, Prohibit, Palette,
 } from "@phosphor-icons/react";
 
 export default function Settings() {
@@ -27,6 +28,7 @@ export default function Settings() {
           {showIntegrations && <TabsTrigger value="integrations" data-testid="tab-integrations"><Plug size={16} className="mr-1.5" />Integrations</TabsTrigger>}
           <TabsTrigger value="org" data-testid="tab-org"><Buildings size={16} className="mr-1.5" />Organisation</TabsTrigger>
           <TabsTrigger value="opening" data-testid="tab-opening"><BookBookmark size={16} className="mr-1.5" />Company Overview</TabsTrigger>
+          {showIntegrations && <TabsTrigger value="whitelabel" data-testid="tab-whitelabel"><Palette size={16} className="mr-1.5" />White-label</TabsTrigger>}
           {showUsers && <TabsTrigger value="users" data-testid="tab-users"><UsersThree size={16} className="mr-1.5" />Users</TabsTrigger>}
           {showRoles && <TabsTrigger value="roles" data-testid="tab-roles"><ShieldStar size={16} className="mr-1.5" />Roles &amp; Access</TabsTrigger>}
           {showAudit && <TabsTrigger value="audit" data-testid="tab-audit"><ListMagnifyingGlass size={16} className="mr-1.5" />Audit</TabsTrigger>}
@@ -35,6 +37,7 @@ export default function Settings() {
         {showIntegrations && <TabsContent value="integrations" className="mt-4"><IntegrationsTab /></TabsContent>}
         <TabsContent value="org" className="mt-4"><OrgTab /></TabsContent>
         <TabsContent value="opening" className="mt-4"><OpeningTab /></TabsContent>
+        {showIntegrations && <TabsContent value="whitelabel" className="mt-4"><WhiteLabelTab /></TabsContent>}
         {showUsers && <TabsContent value="users" className="mt-4"><UsersTab me={user} /></TabsContent>}
         {showRoles && <TabsContent value="roles" className="mt-4"><RolesManager /></TabsContent>}
         {showAudit && <TabsContent value="audit" className="mt-4"><AuditTab /></TabsContent>}
@@ -252,6 +255,60 @@ function OrgTab() {
         <p className="text-xs text-muted-foreground">Outbound calls are blocked outside these hours/days (UK PECR good practice).</p>
       </Section>
       <button data-testid="save-org-button" onClick={save} className="inline-flex items-center gap-2 h-10 px-5 bg-primary text-primary-foreground rounded-sm text-sm font-medium hover:opacity-90"><FloppyDisk size={16} weight="bold" /> Save</button>
+    </div>
+  );
+}
+
+function WhiteLabelTab() {
+  const [org, setOrg] = useState(null);
+  const load = useCallback(async () => { const r = await api.get("/settings/org"); setOrg(r.data); }, []);
+  useEffect(() => { load(); }, [load]);
+  const save = async () => {
+    try {
+      await api.put("/settings/org", { brand_name: org.brand_name || "", logo_url: org.logo_url || "", primary_color: org.primary_color || "" });
+      const r = await api.get("/settings/branding");
+      applyBranding(r.data);
+      toast.success("Branding saved — applied across the app.");
+    } catch (e) { toast.error(apiErr(e)); }
+  };
+  const reset = async () => {
+    try {
+      await api.put("/settings/org", { brand_name: "", logo_url: "", primary_color: "" });
+      applyPrimaryColor(null);
+      applyBranding({ brand_name: "", logo_url: "", primary_color: "" });
+      setOrg({ ...org, brand_name: "", logo_url: "", primary_color: "" });
+      toast.success("Reverted to ColdWave defaults.");
+    } catch (e) { toast.error(apiErr(e)); }
+  };
+  if (!org) return <div className="text-sm text-muted-foreground">Loading…</div>;
+  const color = org.primary_color || "#1d4ed8";
+  return (
+    <div className="space-y-4 max-w-xl">
+      <Section icon={Palette} title="White-label branding">
+        <p className="text-xs text-muted-foreground -mt-1 mb-1">Customise the workspace name, logo and primary colour. A subtle “Powered by ColdWave” credit is always retained.</p>
+        <F label="Brand / company name" testid="brand-name-input" value={org.brand_name || ""} onChange={(e) => setOrg({ ...org, brand_name: e.target.value })} placeholder="e.g. Acme Outreach" />
+        <F label="Logo URL" testid="brand-logo-input" value={org.logo_url || ""} onChange={(e) => setOrg({ ...org, logo_url: e.target.value })} placeholder="https://…/logo.png" />
+        <div>
+          <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Primary colour</label>
+          <div className="mt-1 flex items-center gap-3">
+            <input type="color" data-testid="brand-color-input" value={color} onChange={(e) => setOrg({ ...org, primary_color: e.target.value })}
+              className="h-10 w-14 rounded-sm border border-input bg-card cursor-pointer" />
+            <span className="text-sm tnum text-muted-foreground">{color}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 mt-2 p-3 rounded-sm border border-border bg-card" data-testid="brand-preview">
+          {org.logo_url ? <img src={org.logo_url} alt="logo" className="h-8 w-8 rounded-sm object-cover" /> : <div className="h-8 w-8 rounded-sm flex items-center justify-center text-white font-bold" style={{ backgroundColor: color }}>A</div>}
+          <div>
+            <div className="font-display font-bold">{org.brand_name || "ColdWave"}</div>
+            <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">AI Calling</div>
+          </div>
+          <button type="button" className="ml-auto h-8 px-3 rounded-sm text-xs font-semibold text-white" style={{ backgroundColor: color }}>Sample button</button>
+        </div>
+      </Section>
+      <div className="flex gap-2">
+        <button data-testid="save-brand-button" onClick={save} className="inline-flex items-center gap-2 h-10 px-5 bg-primary text-primary-foreground rounded-sm text-sm font-medium hover:opacity-90"><FloppyDisk size={16} weight="bold" /> Save branding</button>
+        <button data-testid="reset-brand-button" onClick={reset} className="h-10 px-4 rounded-sm border border-border text-sm font-medium hover:bg-accent">Reset to ColdWave</button>
+      </div>
     </div>
   );
 }
