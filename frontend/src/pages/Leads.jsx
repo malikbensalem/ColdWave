@@ -31,14 +31,18 @@ export default function Leads() {
   const [detail, setDetail] = useState(null);
   const [dialing, setDialing] = useState(null);
   const [viewer, setViewer] = useState(null); // { type: 'summary'|'transcript', call, name }
+  const [callTarget, setCallTarget] = useState(null); // contact to dial
+  const [campaigns, setCampaigns] = useState([]);
+  const [callCampaignId, setCallCampaignId] = useState("");
   const [form, setForm] = useState({ name: "", phone: "", email: "", company: "", notes: "", consent: false });
 
   const load = useCallback(async () => {
     const params = {};
     if (filter !== "all") params.status = filter;
     if (search) params.search = search;
-    const { data } = await api.get("/contacts", { params });
+    const [{ data }, { data: camps }] = await Promise.all([api.get("/contacts", { params }), api.get("/campaigns")]);
     setContacts(data);
+    setCampaigns(camps);
   }, [filter, search]);
 
   useEffect(() => { load(); }, [load]);
@@ -80,12 +84,20 @@ export default function Leads() {
     setDetail(null);
   };
 
-  const dial = async (contact, e) => {
+  const openCall = (contact, e) => {
     if (e) e.stopPropagation();
+    setCallCampaignId("");
+    setCallTarget(contact);
+  };
+
+  const confirmDial = async () => {
+    const contact = callTarget;
     setDialing(contact.id);
     try {
-      const { data } = await api.post("/calls/dial", { contact_id: contact.id });
-      toast.success(`Calling ${contact.name} — your 3CX Route Point dials the lead directly. (${data.status || "initiated"})`);
+      const { data } = await api.post("/calls/dial", { contact_id: contact.id, campaign_id: callCampaignId || null });
+      const via = data.provider === "twilio" ? "Twilio" : "3CX";
+      toast.success(`Calling ${contact.name} via ${via}${callCampaignId ? " · " + (campaigns.find((c) => c.id === callCampaignId)?.name || "campaign") : ""} (${data.status || "initiated"})`);
+      setCallTarget(null);
       load();
     } catch (err) { toast.error(apiErr(err)); }
     finally { setDialing(null); }
@@ -177,7 +189,7 @@ export default function Leads() {
                 <td className="py-2.5 px-4 text-muted-foreground text-xs">{c.last_call_campaign || "—"}</td>
                 <td className="py-2.5 px-4 text-muted-foreground text-xs whitespace-nowrap">{c.last_call_date ? fmtDate(c.last_call_date) : "—"}</td>
                 <td className="py-2.5 px-4 text-right">
-                  <button data-testid={`call-lead-${c.id}`} disabled={!callable || dialing === c.id} onClick={(e) => dial(c, e)}
+                  <button data-testid={`call-lead-${c.id}`} disabled={!callable || dialing === c.id} onClick={(e) => openCall(c, e)}
                     title={callable ? "Call via 3CX" : "Contact opted out / DNC"}
                     className="inline-flex items-center gap-1.5 h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent hover:text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                     <PhoneCall size={14} weight="fill" /> {dialing === c.id ? "Calling…" : "Call"}
@@ -248,7 +260,7 @@ export default function Leads() {
                 </div>
 
                 <div className="flex gap-2 pt-2 border-t border-border">
-                  <button data-testid="call-lead-detail-button" onClick={() => dial(detail)} disabled={detail.opted_out || detail.do_not_call || detail.status === "opted_out" || detail.status === "dnc" || dialing === detail.id}
+                  <button data-testid="call-lead-detail-button" onClick={() => openCall(detail)} disabled={detail.opted_out || detail.do_not_call || detail.status === "opted_out" || detail.status === "dnc" || dialing === detail.id}
                     className="flex-1 inline-flex items-center justify-center gap-1.5 h-9 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 disabled:opacity-40">
                     <PhoneCall size={15} weight="fill" /> {dialing === detail.id ? "Calling…" : "Call via 3CX"}
                   </button>
@@ -260,6 +272,31 @@ export default function Leads() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Campaign picker before dialing */}
+      <Dialog open={!!callTarget} onOpenChange={(o) => !o && setCallTarget(null)}>
+        <DialogContent data-testid="call-campaign-dialog">
+          <DialogHeader><DialogTitle className="font-display">Call {callTarget?.name}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">Choose which campaign this call belongs to. The active telephony provider (3CX or Twilio) is used automatically based on your Settings.</p>
+            <div>
+              <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Campaign</label>
+              <select data-testid="call-campaign-select" value={callCampaignId} onChange={(e) => setCallCampaignId(e.target.value)}
+                className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <option value="">Ad-hoc call (no campaign)</option>
+                {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="text-xs text-muted-foreground tnum">Dialing: {callTarget?.phone}</div>
+          </div>
+          <DialogFooter>
+            <button data-testid="confirm-dial-button" onClick={confirmDial} disabled={dialing === callTarget?.id}
+              className="inline-flex items-center gap-2 h-10 px-5 bg-primary text-primary-foreground rounded-sm text-sm font-medium hover:opacity-90 disabled:opacity-60">
+              <PhoneCall size={15} weight="fill" /> {dialing === callTarget?.id ? "Calling…" : "Call now"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Summary / Transcript viewer */}
       <Dialog open={!!viewer} onOpenChange={(o) => !o && setViewer(null)}>

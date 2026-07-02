@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 12 — verified the two reported bugs are fixed: (1) CRM Call button now opens a campaign-picker dialog before dialing (call-campaign-dialog with call-campaign-select and confirm-dial-button; NOT clicked for safety); (2) The dialer is no longer hardcoded to 3CX — /api/calls/dial dispatches on integrations.telephony_provider and returns a Twilio-specific 400 when provider='twilio' and twilio_enabled=false, and a 3CX-specific 400 when provider='3cx' and tcx_enabled=false. Also verified the integrations partial-merge regression (PUT with only telephony_provider preserves tcx_url/tcx_extension). Backend pytest: 5/5 pass. UI Playwright: dialog opens from BOTH call-lead-<id> (row) and call-lead-detail-button (detail sheet); dropdown includes 'Ad-hoc call (no campaign)' + 2 campaigns; provider note '(3CX or Twilio) is used automatically' present. Final integrations state restored per task spec.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verified_passing": [
+    "PUT /api/settings/integrations {telephony_provider:'twilio', twilio_enabled:false} then POST /api/calls/dial → 400 with detail containing 'Twilio is selected but not enabled' (NOT the old '3CX live calling is not enabled').",
+    "PUT /api/settings/integrations {telephony_provider:'3cx'} then POST /api/calls/dial (tcx_enabled=false) → 400 with detail mentioning '3CX'.",
+    "POST /api/settings/integrations/twilio/test with bogus SID/token → 200 {valid:false} (no real call attempted).",
+    "PUT /api/settings/integrations with ONLY {telephony_provider:'3cx'} does NOT wipe other fields — GET still returns tcx_url='citiq.3cx.co.za:5001' and tcx_extension='45214521' (partial merge via $set integrations.<k>).",
+    "GET /api/campaigns returns 2 demo campaigns → picker shows both plus Ad-hoc option.",
+    "UI: clicking call-lead-<id> row button opens call-campaign-dialog; select has 3 options; confirm-dial-button visible.",
+    "UI: opening a lead's detail sheet and clicking call-lead-detail-button ALSO opens the same campaign-picker dialog (openCall is shared).",
+    "UI copy: 'The active telephony provider (3CX or Twilio) is used automatically based on your Settings.' present in dialog."
+  ],
+  "safety_notes": [
+    "Did NOT click confirm-dial-button. Did NOT POST /api/calls/dial with any provider ENABLED. Did NOT POST /api/campaigns/{id}/dial-next. Twilio /test used bogus creds only.",
+    "Final Settings→Integrations state (verified via GET): telephony_provider='3cx', twilio_enabled=false, twilio_account_sid='', tcx_url='citiq.3cx.co.za:5001', tcx_extension='45214521', tcx_enabled=false — matches task-spec cleanup requirements."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration12_dialer.py",
+    "/app/test_reports/pytest/iter12_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Leads.jsx line 193 & 265: static tooltip/button label still says 'Call via 3CX' regardless of the selected telephony provider. Minor UX polish — could read 'Call via {provider}' based on GET /api/settings/integrations.telephony_provider, or just 'Call' to be provider-agnostic (matches the dialog's provider-agnostic messaging).",
+    "routes.py place_outbound_call falls back to '3cx' when telephony_provider is empty/None — that's sensible today, but if a tenant has ONLY Twilio configured with an empty provider field it will still 400 with the 3CX message. Not a bug per current spec, just worth noting.",
+    "Frontend confirmDial toast reads data.provider ('twilio' or '3cx') from the API response — good, this future-proofs the UI once real dials happen."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration12_dialer.py (new pytest suite, 5 tests)"
+  ],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "100% (all critical selectors + both entry points verified)"},
+  "test_credentials": "Admin: admin@coldwave.ai / Admin123!",
+  "seed_data_creation": "None. Integrations were toggled and restored to task-spec baseline as part of pytest teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Bug fixes for provider-aware dialing (Twilio vs 3CX dispatch in place_outbound_call) and CRM campaign picker (Leads.jsx confirmDial flow) are both verified. Selectors: call-lead-<id>, call-lead-detail-button, call-campaign-dialog, call-campaign-select, confirm-dial-button. IMPORTANT SAFETY: never click confirm-dial-button and never POST /api/calls/dial with a provider ENABLED + valid creds — that will place a real phone call via 3CX or Twilio. Integrations partial-merge (routes.py:840, $set integrations.<k>) is the source of truth — regression-tested here."
+}

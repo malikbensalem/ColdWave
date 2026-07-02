@@ -11,7 +11,7 @@ from models import (
     IntegrationSettings, InviteUserRequest, UpdateUserRequest, ElevenLabsTestRequest,
     LLMTestRequest, VoiceCharacteristicsUpdate, BanRequest, DialRequest, TcxTestRequest, TwilioTestRequest, now_utc, new_id,
 )
-from telephony import test_connection as telephony_test, make_call as telephony_make_call
+from telephony import test_connection as telephony_test, make_call as telephony_make_call, twilio_make_call as telephony_twilio_call
 from integrations import (
     VOICE_CATALOG, get_voice, generate_voice_preview, generate_script,
     agent_reply, analyze_transcript, generate_tts, select_tts_provider,
@@ -36,6 +36,32 @@ async def audit(org_id: str, user: dict, action: str, detail: str = "", entity: 
 def clean(doc: dict) -> dict:
     doc.pop("_id", None)
     return doc
+
+
+async def place_outbound_call(integ: dict, destination: str, say_text: str = None) -> dict:
+    """Route an outbound call to the tenant's selected provider (3CX or Twilio).
+    Returns {result, provider, extension}. Raises HTTPException with a clear message."""
+    provider = (integ.get("telephony_provider") or "3cx").lower()
+    if provider == "twilio":
+        if not integ.get("twilio_enabled"):
+            raise HTTPException(400, "Twilio is selected but not enabled. Enable Twilio in Settings → Integrations.")
+        try:
+            result = await telephony_twilio_call(integ, destination, say_text)
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            raise HTTPException(502, f"Could not place call via Twilio: {str(e)[:160]}")
+        return {"result": result, "provider": "twilio", "extension": integ.get("twilio_phone_number", "")}
+    # default: 3CX
+    if not integ.get("tcx_enabled"):
+        raise HTTPException(400, "3CX live calling is not enabled. Select Twilio, or configure and enable 3CX in Settings → Integrations.")
+    try:
+        result = await telephony_make_call(integ, destination)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Could not place call via 3CX: {str(e)[:160]}")
+    return {"result": result, "provider": "3cx", "extension": integ.get("tcx_extension", "")}
 
 
 async def attach_system_prefix(org: dict, channel: str = "call") -> dict:
@@ -386,14 +412,12 @@ async def campaign_queue(campaign_id: str, user: dict = Depends(get_current_user
 
 @router.post("/campaigns/{campaign_id}/dial-next")
 async def campaign_dial_next(campaign_id: str, user: dict = Depends(require_perm("leads", "read"))):
-    """Originate a live 3CX call to the next contact in the campaign queue and log it against the campaign."""
+    """Originate a live call (3CX or Twilio, per settings) to the next contact in the campaign queue."""
     camp = await db.campaigns.find_one({"id": campaign_id, "org_id": user["org_id"]}, {"_id": 0})
     if not camp:
         raise HTTPException(404, "Campaign not found")
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
     integ = (org or {}).get("integrations", {})
-    if not integ.get("tcx_enabled"):
-        raise HTTPException(400, "3CX live calling is not enabled. Configure and enable it in Settings → Integrations.")
 
     queue = await campaign_queue(campaign_id, user)
     nxt = queue.get("next")
@@ -403,18 +427,25 @@ async def campaign_dial_next(campaign_id: str, user: dict = Depends(require_perm
     if not contact or not contact.get("phone"):
         raise HTTPException(400, "Next contact has no phone number.")
 
-    try:
-        result = await telephony_make_call(integ, contact["phone"])
-    except (ValueError, RuntimeError) as e:
-        raise HTTPException(400, str(e))
-    except Exception as e:
-        raise HTTPException(502, f"Could not place call via 3CX: {str(e)[:160]}")
+    say_text = None
+    if camp.get("script_id"):
+        script = await db.scripts.find_one({"id": camp["script_id"], "org_id": user["org_id"]}, {"_id": 0})
+        if script:
+            import re as _re
+            for line in (script.get("content") or "").split("\n"):
+                s = _re.sub(r"^\s*\[[^\]]*\]\s*", "", line).strip()
+                if s:
+                    say_text = s
+                    break
+
+    call = await place_outbound_call(integ, contact["phone"], say_text)
+    result = call["result"]
 
     call_doc = {
         "id": new_id("call"), "org_id": user["org_id"], "type": "campaign", "campaign_id": campaign_id,
         "contact_id": contact["id"], "contact_name": contact.get("name", ""),
-        "destination": contact["phone"], "extension": integ.get("tcx_extension", ""),
-        "provider": "3cx", "callid": result.get("callid"), "status": result.get("status", "Initiated"),
+        "destination": contact["phone"], "extension": call["extension"],
+        "provider": call["provider"], "callid": result.get("callid"), "status": result.get("status", "Initiated"),
         "agent_id": user["id"], "agent_email": user["email"], "created_at": now_utc().isoformat(),
     }
     await db.calls.insert_one(dict(call_doc))
@@ -805,9 +836,15 @@ async def get_integrations(user: dict = Depends(require_admin)):
 
 @router.put("/settings/integrations")
 async def update_integrations(req: IntegrationSettings, user: dict = Depends(require_admin)):
-    await db.organizations.update_one({"id": user["org_id"]}, {"$set": {"integrations": req.model_dump()}})
+    # Merge only the fields actually sent (exclude_unset) so a partial save never wipes other secrets.
+    updates = req.model_dump(exclude_unset=True)
+    if updates:
+        await db.organizations.update_one(
+            {"id": user["org_id"]},
+            {"$set": {f"integrations.{k}": v for k, v in updates.items()}})
     await audit(user["org_id"], user, "integrations_update", "")
-    return req.model_dump()
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    return (org or {}).get("integrations", {})
 
 
 @router.post("/settings/integrations/tcx/test")
@@ -861,8 +898,6 @@ async def test_twilio(req: TwilioTestRequest, user: dict = Depends(require_admin
 async def dial_contact(req: DialRequest, user: dict = Depends(require_perm("leads", "read"))):
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
     integ = (org or {}).get("integrations", {})
-    if not integ.get("tcx_enabled"):
-        raise HTTPException(400, "3CX live calling is not enabled. Configure and enable it in Settings → Integrations.")
 
     contact = None
     destination = req.destination
@@ -876,18 +911,31 @@ async def dial_contact(req: DialRequest, user: dict = Depends(require_perm("lead
     if not destination:
         raise HTTPException(400, "No phone number to dial.")
 
-    try:
-        result = await telephony_make_call(integ, destination)
-    except (ValueError, RuntimeError) as e:
-        raise HTTPException(400, str(e))
-    except Exception as e:
-        raise HTTPException(502, f"Could not place call via 3CX: {str(e)[:160]}")
+    # Optional campaign selected from the CRM — logs the call against it and seeds the Twilio opening.
+    campaign = None
+    say_text = None
+    if req.campaign_id:
+        campaign = await db.campaigns.find_one({"id": req.campaign_id, "org_id": user["org_id"]}, {"_id": 0})
+        if not campaign:
+            raise HTTPException(404, "Campaign not found")
+        if campaign.get("script_id"):
+            script = await db.scripts.find_one({"id": campaign["script_id"], "org_id": user["org_id"]}, {"_id": 0})
+            if script:
+                import re as _re
+                for line in (script.get("content") or "").split("\n"):
+                    s = _re.sub(r"^\s*\[[^\]]*\]\s*", "", line).strip()
+                    if s:
+                        say_text = s
+                        break
+
+    call = await place_outbound_call(integ, destination, say_text)
+    result = call["result"]
 
     call_doc = {
         "id": new_id("call"), "org_id": user["org_id"], "type": "manual",
         "contact_id": req.contact_id, "contact_name": (contact or {}).get("name", ""),
-        "destination": destination, "extension": integ.get("tcx_extension", ""),
-        "provider": "3cx", "callid": result.get("callid"), "status": result.get("status", "Initiated"),
+        "campaign_id": req.campaign_id, "destination": destination, "extension": call["extension"],
+        "provider": call["provider"], "callid": result.get("callid"), "status": result.get("status", "Initiated"),
         "agent_id": user["id"], "agent_email": user["email"], "created_at": now_utc().isoformat(),
     }
     await db.calls.insert_one(dict(call_doc))
@@ -895,7 +943,7 @@ async def dial_contact(req: DialRequest, user: dict = Depends(require_perm("lead
         await db.contacts.update_one({"id": contact["id"], "org_id": user["org_id"]}, {"$set": {"status": "contacted"}})
     await audit(user["org_id"], user, "manual_call", destination, entity="contact", entity_id=req.contact_id)
     call_doc.pop("_id", None)
-    return {"ok": True, "callid": result.get("callid"), "status": result.get("status"), "call": clean(call_doc)}
+    return {"ok": True, "callid": result.get("callid"), "status": result.get("status"), "provider": call["provider"], "call": clean(call_doc)}
 
 
 # ---------------- User Management ----------------

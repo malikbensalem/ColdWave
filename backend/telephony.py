@@ -150,3 +150,29 @@ async def make_call(integ: dict, destination: str) -> dict:
         "For automated outbound with no human leg, set 'Extension / DN' to a 3CX Route Point "
         "assigned to this API app — a normal user extension will ring itself instead of dialing out."
     )
+
+
+async def twilio_make_call(integ: dict, destination: str, say_text: str = None) -> dict:
+    """Originate a real outbound call via Twilio Programmable Voice.
+    Without a media-streaming setup the call speaks the opening line then pauses
+    (full AI conversation over Twilio requires Media Streams — a later step)."""
+    from xml.sax.saxutils import escape
+    sid = (integ.get("twilio_account_sid") or "").strip()
+    token = (integ.get("twilio_auth_token") or "").strip()
+    from_num = (integ.get("twilio_phone_number") or "").strip()
+    if not (sid and token and from_num):
+        raise ValueError("Twilio is not fully configured — set Account SID, Auth Token and a Twilio phone number in Settings → Integrations.")
+    if not destination:
+        raise ValueError("No destination number provided.")
+    dest = destination.strip().replace(" ", "")
+    say = say_text or "Hello, this is an automated call from your A I assistant. Please hold a moment."
+    twiml = f'<Response><Say voice="Polly.Amy">{escape(say)}</Say><Pause length="3"/></Response>'
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Calls.json"
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        r = await client.post(url, data={"To": dest, "From": from_num, "Twiml": twiml}, auth=(sid, token))
+    if r.status_code in (200, 201):
+        d = r.json()
+        return {"callid": d.get("sid"), "status": d.get("status", "queued")}
+    if r.status_code in (401, 403):
+        raise RuntimeError("Twilio rejected the credentials (401/403). Re-check your Account SID / Auth Token.")
+    raise RuntimeError(f"Twilio call failed ({r.status_code}): {r.text[:180]}")

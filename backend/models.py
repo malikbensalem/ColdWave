@@ -84,6 +84,7 @@ class AdminSetRoleRequest(BaseModel):
 class DialRequest(BaseModel):
     contact_id: Optional[str] = None
     destination: Optional[str] = None
+    campaign_id: Optional[str] = None
 
 
 class TcxTestRequest(BaseModel):
