@@ -240,11 +240,52 @@ async def delete_script(script_id: str, user: dict = Depends(get_current_user)):
 
 
 # ---------------- Campaigns ----------------
+CAMPAIGN_AUDIENCE_QUERY = {
+    "all": {},
+    "new": {"status": "new"},
+    "positive": {"status": "positive"},
+    "contacted": {"status": "contacted"},
+    "callback": {"status": "callback"},
+    "consented": {"consent": True},
+}
+
+
+async def _campaign_calls(org_id: str, campaign_id: str) -> list:
+    return await db.calls.find({"org_id": org_id, "campaign_id": campaign_id}, {"_id": 0}).sort("created_at", -1).to_list(20000)
+
+
+def _campaign_analytics(calls: list) -> dict:
+    ratings = []
+    for c in calls:
+        r = c.get("rating")
+        if r is None:
+            r = (c.get("analysis") or {}).get("score")
+        if isinstance(r, (int, float)):
+            ratings.append(r)
+    completed = [c for c in calls if c.get("status") == "completed"]
+    positive = [c for c in calls if c.get("sentiment") == "positive"]
+    return {
+        "times_used": len(calls),
+        "total_calls": len(calls),
+        "completed": len(completed),
+        "avg_rating": round(sum(ratings) / len(ratings), 1) if ratings else None,
+        "positive": len(positive),
+        "positive_rate": round(len(positive) / len(calls) * 100) if calls else 0,
+        "sentiment": {
+            "positive": len(positive),
+            "neutral": len([c for c in calls if c.get("sentiment") == "neutral"]),
+            "negative": len([c for c in calls if c.get("sentiment") == "negative"]),
+        },
+    }
+
+
 @router.get("/campaigns")
 async def list_campaigns(user: dict = Depends(get_current_user)):
     camps = await db.campaigns.find({"org_id": user["org_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
     for c in camps:
-        c["call_count"] = await db.calls.count_documents({"campaign_id": c["id"]})
+        calls = await _campaign_calls(user["org_id"], c["id"])
+        c["call_count"] = len(calls)
+        c["analytics"] = _campaign_analytics(calls)
     return camps
 
 
@@ -253,6 +294,7 @@ async def create_campaign(req: CampaignCreate, user: dict = Depends(get_current_
     doc = {
         "id": new_id("camp"), "org_id": user["org_id"], "name": req.name,
         "script_id": req.script_id, "voice_id": req.voice_id, "description": req.description or "",
+        "audience": req.audience, "schedule_type": req.schedule_type, "scheduled_at": req.scheduled_at,
         "status": "draft", "created_at": now_utc().isoformat(),
     }
     await db.campaigns.insert_one(dict(doc))
@@ -273,6 +315,110 @@ async def update_campaign(campaign_id: str, req: CampaignUpdate, user: dict = De
 async def delete_campaign(campaign_id: str, user: dict = Depends(get_current_user)):
     await db.campaigns.delete_one({"id": campaign_id, "org_id": user["org_id"]})
     return {"ok": True}
+
+
+@router.get("/campaigns/{campaign_id}/analytics")
+async def campaign_analytics(campaign_id: str, user: dict = Depends(get_current_user)):
+    camp = await db.campaigns.find_one({"id": campaign_id, "org_id": user["org_id"]}, {"_id": 0})
+    if not camp:
+        raise HTTPException(404, "Campaign not found")
+    calls = await _campaign_calls(user["org_id"], campaign_id)
+    return {"campaign": camp, **_campaign_analytics(calls)}
+
+
+@router.get("/campaigns/{campaign_id}/queue")
+async def campaign_queue(campaign_id: str, user: dict = Depends(get_current_user)):
+    """Who has been called on this campaign, who's next, and the upcoming audience queue."""
+    camp = await db.campaigns.find_one({"id": campaign_id, "org_id": user["org_id"]}, {"_id": 0})
+    if not camp:
+        raise HTTPException(404, "Campaign not found")
+    cmap = await _campaign_name_map(user["org_id"])
+    calls = await _campaign_calls(user["org_id"], campaign_id)
+
+    # Contacted: latest call per contact for this campaign.
+    contacted = []
+    seen = set()
+    called_ids = set()
+    for cl in calls:
+        cid = cl.get("contact_id")
+        if not cid:
+            continue
+        called_ids.add(cid)
+        if cid in seen:
+            continue
+        seen.add(cid)
+        contact = await db.contacts.find_one({"id": cid, "org_id": user["org_id"]}, {"_id": 0})
+        enriched = _enrich_call(cl, cmap)
+        contacted.append({
+            "contact_id": cid, "name": (contact or {}).get("name", "—"),
+            "phone": (contact or {}).get("phone", ""), "company": (contact or {}).get("company", ""),
+            "rating": enriched.get("rating"), "sentiment": cl.get("sentiment"),
+            "summary": enriched.get("summary"), "status": cl.get("status"), "called_at": cl.get("created_at"),
+        })
+
+    # Upcoming: audience-matched contacts not yet called on this campaign (skip opted-out/DNC).
+    q = {"org_id": user["org_id"], "opted_out": {"$ne": True},
+         "status": {"$nin": ["opted_out", "dnc"]}}
+    q.update(CAMPAIGN_AUDIENCE_QUERY.get(camp.get("audience", "all"), {}))
+    audience_contacts = await db.contacts.find(q, {"_id": 0}).sort("created_at", 1).to_list(5000)
+    upcoming = [
+        {"contact_id": c["id"], "name": c["name"], "phone": c["phone"], "company": c.get("company", ""), "status": c.get("status")}
+        for c in audience_contacts if c["id"] not in called_ids
+    ]
+    return {
+        "campaign": camp,
+        "audience": camp.get("audience", "all"),
+        "contacted": contacted,
+        "contacted_count": len(contacted),
+        "upcoming": upcoming[:200],
+        "upcoming_count": len(upcoming),
+        "next": upcoming[0] if upcoming else None,
+    }
+
+
+@router.post("/campaigns/{campaign_id}/dial-next")
+async def campaign_dial_next(campaign_id: str, user: dict = Depends(require_perm("leads", "read"))):
+    """Originate a live 3CX call to the next contact in the campaign queue and log it against the campaign."""
+    camp = await db.campaigns.find_one({"id": campaign_id, "org_id": user["org_id"]}, {"_id": 0})
+    if not camp:
+        raise HTTPException(404, "Campaign not found")
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    integ = (org or {}).get("integrations", {})
+    if not integ.get("tcx_enabled"):
+        raise HTTPException(400, "3CX live calling is not enabled. Configure and enable it in Settings → Integrations.")
+
+    queue = await campaign_queue(campaign_id, user)
+    nxt = queue.get("next")
+    if not nxt:
+        raise HTTPException(400, "The campaign queue is empty — no more contacts to dial.")
+    contact = await db.contacts.find_one({"id": nxt["contact_id"], "org_id": user["org_id"]}, {"_id": 0})
+    if not contact or not contact.get("phone"):
+        raise HTTPException(400, "Next contact has no phone number.")
+
+    try:
+        result = await telephony_make_call(integ, contact["phone"])
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Could not place call via 3CX: {str(e)[:160]}")
+
+    call_doc = {
+        "id": new_id("call"), "org_id": user["org_id"], "type": "campaign", "campaign_id": campaign_id,
+        "contact_id": contact["id"], "contact_name": contact.get("name", ""),
+        "destination": contact["phone"], "extension": integ.get("tcx_extension", ""),
+        "provider": "3cx", "callid": result.get("callid"), "status": result.get("status", "Initiated"),
+        "agent_id": user["id"], "agent_email": user["email"], "created_at": now_utc().isoformat(),
+    }
+    await db.calls.insert_one(dict(call_doc))
+    if contact.get("status") in (None, "new"):
+        await db.contacts.update_one({"id": contact["id"], "org_id": user["org_id"]}, {"$set": {"status": "contacted"}})
+    if camp.get("status") == "draft":
+        await db.campaigns.update_one({"id": campaign_id}, {"$set": {"status": "active"}})
+    await audit(user["org_id"], user, "campaign_dial", contact["phone"], entity="campaign", entity_id=campaign_id)
+    call_doc.pop("_id", None)
+    return {"ok": True, "dialed": {"name": contact["name"], "phone": contact["phone"]},
+            "callid": result.get("callid"), "status": result.get("status"),
+            "remaining": queue.get("upcoming_count", 0) - 1}
 
 
 # ---------------- Voices ----------------

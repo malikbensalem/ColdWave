@@ -5,8 +5,10 @@ import { useAuth } from "../context/AuthContext";
 import { speakMock, stopAll, playAudio } from "../lib/voice";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   Plus, Sparkle, SpeakerHigh, Stop, Megaphone, FileText, MicrophoneStage, Trash, GenderMale, GenderFemale, PencilSimple,
+  Star, PhoneCall, Queue as QueueIcon, ChartBar,
 } from "@phosphor-icons/react";
 
 export default function Campaigns() {
@@ -30,12 +32,22 @@ export default function Campaigns() {
   );
 }
 
+const AUDIENCES = [
+  { value: "all", label: "All leads" },
+  { value: "new", label: "New leads" },
+  { value: "contacted", label: "Contacted" },
+  { value: "callback", label: "Callback due" },
+  { value: "positive", label: "Positive responders" },
+  { value: "consented", label: "Consented (GDPR)" },
+];
+
 function CampaignsTab() {
   const [items, setItems] = useState([]);
   const [scripts, setScripts] = useState([]);
   const [voices, setVoices] = useState([]);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", description: "", script_id: "", voice_id: "" });
+  const [queueFor, setQueueFor] = useState(null);
+  const [form, setForm] = useState({ name: "", description: "", script_id: "", voice_id: "", audience: "all", schedule_type: "manual", scheduled_at: "" });
 
   const load = useCallback(async () => {
     const [c, s, v] = await Promise.all([api.get("/campaigns"), api.get("/scripts"), api.get("/voices")]);
@@ -45,7 +57,14 @@ function CampaignsTab() {
 
   const create = async (e) => {
     e.preventDefault();
-    try { await api.post("/campaigns", form); toast.success("Campaign created"); setOpen(false); setForm({ name: "", description: "", script_id: "", voice_id: "" }); load(); }
+    try {
+      const payload = { ...form };
+      if (payload.schedule_type !== "scheduled") payload.scheduled_at = null;
+      await api.post("/campaigns", payload);
+      toast.success("Campaign created"); setOpen(false);
+      setForm({ name: "", description: "", script_id: "", voice_id: "", audience: "all", schedule_type: "manual", scheduled_at: "" });
+      load();
+    }
     catch (err) { toast.error(apiErr(err)); }
   };
   const toggle = async (c) => { await api.put(`/campaigns/${c.id}`, { status: c.status === "active" ? "paused" : "active" }); load(); };
@@ -63,31 +82,142 @@ function CampaignsTab() {
             <form onSubmit={create} className="space-y-3">
               <Field label="Campaign name" testid="campaign-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
               <Field label="Description" testid="campaign-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+              <Sel label="Target audience (CRM filter)" testid="campaign-audience" value={form.audience} onChange={(e) => setForm({ ...form, audience: e.target.value })} options={AUDIENCES} noBlank />
               <Sel label="Script" testid="campaign-script" value={form.script_id} onChange={(e) => setForm({ ...form, script_id: e.target.value })} options={scripts.map((s) => ({ value: s.id, label: s.name }))} />
               <Sel label="AI Voice" testid="campaign-voice" value={form.voice_id} onChange={(e) => setForm({ ...form, voice_id: e.target.value })} options={voices.map((v) => ({ value: v.id, label: `${v.name} (${v.gender}, ${v.accent})` }))} />
+              <Sel label="Launch" testid="campaign-schedule-type" value={form.schedule_type} onChange={(e) => setForm({ ...form, schedule_type: e.target.value })} options={[{ value: "manual", label: "Manual (dial from queue)" }, { value: "scheduled", label: "Scheduled" }]} noBlank />
+              {form.schedule_type === "scheduled" && (
+                <div><label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Scheduled for</label>
+                  <input type="datetime-local" data-testid="campaign-scheduled-at" value={form.scheduled_at} onChange={(e) => setForm({ ...form, scheduled_at: e.target.value })}
+                    className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" /></div>
+              )}
               <DialogFooter><button data-testid="save-campaign-button" type="submit" className="h-10 px-4 bg-primary text-primary-foreground rounded-sm text-sm font-medium">Create</button></DialogFooter>
             </form>
           </DialogContent>
         </Dialog>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {items.map((c) => (
-          <div key={c.id} data-testid={`campaign-card-${c.id}`} className="bg-card border border-border rounded-sm p-4">
+        {items.map((c) => {
+          const a = c.analytics || {};
+          return (
+          <div key={c.id} data-testid={`campaign-card-${c.id}`} className="bg-card border border-border rounded-sm p-4 flex flex-col">
             <div className="flex justify-between items-start">
               <h3 className="font-display font-semibold text-lg">{c.name}</h3>
               <span className={`text-xs px-2 py-0.5 rounded-sm font-semibold capitalize ${c.status === "active" ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"}`}>{c.status}</span>
             </div>
             <p className="text-sm text-muted-foreground mt-1 min-h-[20px]">{c.description}</p>
-            <div className="text-xs text-muted-foreground mt-3 tnum">{c.call_count} calls logged</div>
-            <div className="flex gap-2 mt-3">
-              <button data-testid={`toggle-campaign-${c.id}`} onClick={() => toggle(c)} className="flex-1 h-8 rounded-sm border border-border text-sm font-medium hover:bg-accent">{c.status === "active" ? "Pause" : "Activate"}</button>
+            <div className="mt-2">
+              <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 bg-accent rounded-sm font-semibold">{AUDIENCES.find((x) => x.value === c.audience)?.label || "All leads"}</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2 mt-3 text-center" data-testid={`campaign-analytics-${c.id}`}>
+              <Metric label="Times used" value={a.times_used ?? 0} />
+              <Metric label="Avg rating" value={a.avg_rating != null ? a.avg_rating : "—"} accent={a.avg_rating >= 70} />
+              <Metric label="Positive" value={`${a.positive_rate ?? 0}%`} />
+            </div>
+            <div className="flex gap-2 mt-3 pt-3 border-t border-border">
+              <button data-testid={`campaign-queue-${c.id}`} onClick={() => setQueueFor(c)} className="flex-1 inline-flex items-center justify-center gap-1.5 h-8 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90"><QueueIcon size={15} weight="bold" /> Queue</button>
+              <button data-testid={`toggle-campaign-${c.id}`} onClick={() => toggle(c)} className="h-8 px-3 rounded-sm border border-border text-sm font-medium hover:bg-accent">{c.status === "active" ? "Pause" : "Activate"}</button>
               <button onClick={() => remove(c.id)} className="h-8 px-2.5 rounded-sm border border-border text-muted-foreground hover:bg-accent"><Trash size={15} /></button>
             </div>
           </div>
-        ))}
+        ); })}
         {items.length === 0 && <Empty text="No campaigns yet — create one to get started." />}
       </div>
+
+      <CampaignQueue campaign={queueFor} onClose={() => setQueueFor(null)} onChanged={load} />
     </div>
+  );
+}
+
+function Metric({ label, value, accent }) {
+  return (
+    <div className="bg-secondary/50 rounded-sm py-1.5">
+      <div className={`text-base font-bold tnum ${accent ? "text-success" : ""}`}>{value}</div>
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+    </div>
+  );
+}
+
+function CampaignQueue({ campaign, onClose, onChanged }) {
+  const [data, setData] = useState(null);
+  const [dialing, setDialing] = useState(false);
+  const [tab, setTab] = useState("upcoming");
+
+  const load = useCallback(async () => {
+    if (!campaign) return;
+    const { data } = await api.get(`/campaigns/${campaign.id}/queue`);
+    setData(data);
+  }, [campaign]);
+  useEffect(() => { load(); }, [load]);
+
+  const dialNext = async () => {
+    setDialing(true);
+    try {
+      const { data: res } = await api.post(`/campaigns/${campaign.id}/dial-next`);
+      toast.success(`Dialing ${res.dialed.name} (${res.dialed.phone}) — ${res.remaining} left in queue.`);
+      await load();
+      onChanged?.();
+    } catch (err) { toast.error(apiErr(err)); }
+    finally { setDialing(false); }
+  };
+
+  return (
+    <Sheet open={!!campaign} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent className="w-full sm:max-w-lg overflow-y-auto" data-testid="campaign-queue-sheet">
+        {campaign && data && (
+          <>
+            <SheetHeader><SheetTitle className="font-display text-2xl">{campaign.name}</SheetTitle></SheetHeader>
+            <div className="mt-4 space-y-4">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-secondary/50 rounded-sm p-3"><div className="text-2xl font-bold tnum">{data.contacted_count}</div><div className="text-xs text-muted-foreground">Contacted</div></div>
+                <div className="bg-secondary/50 rounded-sm p-3"><div className="text-2xl font-bold tnum">{data.upcoming_count}</div><div className="text-xs text-muted-foreground">Upcoming</div></div>
+              </div>
+
+              <div className="border border-border rounded-sm p-3 bg-card">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-1">Next in queue</div>
+                {data.next ? (
+                  <div className="flex items-center justify-between">
+                    <div><div className="font-medium">{data.next.name}</div><div className="text-xs text-muted-foreground tnum">{data.next.phone} · {data.next.company || "—"}</div></div>
+                    <button data-testid="campaign-dial-next" onClick={dialNext} disabled={dialing}
+                      className="inline-flex items-center gap-1.5 h-9 px-4 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 disabled:opacity-50">
+                      <PhoneCall size={15} weight="fill" /> {dialing ? "Dialing…" : "Dial next"}
+                    </button>
+                  </div>
+                ) : <div className="text-sm text-muted-foreground">Queue empty — everyone in this audience has been called.</div>}
+              </div>
+
+              <div className="flex gap-1">
+                <button onClick={() => setTab("upcoming")} data-testid="queue-tab-upcoming" className={`px-3 h-8 rounded-sm text-xs font-semibold border ${tab === "upcoming" ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-accent"}`}>Upcoming ({data.upcoming_count})</button>
+                <button onClick={() => setTab("contacted")} data-testid="queue-tab-contacted" className={`px-3 h-8 rounded-sm text-xs font-semibold border ${tab === "contacted" ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-accent"}`}>Called ({data.contacted_count})</button>
+              </div>
+
+              {tab === "upcoming" ? (
+                <div className="space-y-1.5">
+                  {data.upcoming.length ? data.upcoming.map((u) => (
+                    <div key={u.contact_id} className="flex items-center justify-between border border-border rounded-sm px-3 py-2 text-sm">
+                      <span className="font-medium">{u.name}</span>
+                      <span className="text-xs text-muted-foreground tnum">{u.phone}</span>
+                    </div>
+                  )) : <div className="text-sm text-muted-foreground">No upcoming contacts for this audience.</div>}
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {data.contacted.length ? data.contacted.map((c) => (
+                    <div key={c.contact_id} className="border border-border rounded-sm px-3 py-2 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">{c.name}</span>
+                        {c.rating != null && <span className="inline-flex items-center gap-1 text-xs font-semibold tnum text-success"><Star size={12} weight="fill" />{c.rating}</span>}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-0.5">{c.summary || c.status || "—"}</div>
+                    </div>
+                  )) : <div className="text-sm text-muted-foreground">No calls logged yet.</div>}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -306,7 +436,7 @@ function VoicesTab() {
 function Field({ label, testid, ...rest }) {
   return <div><label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">{label}</label><input data-testid={testid} {...rest} className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" /></div>;
 }
-function Sel({ label, testid, options, ...rest }) {
-  return <div><label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">{label}</label><select data-testid={testid} {...rest} className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><option value="">— select —</option>{options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>;
+function Sel({ label, testid, options, noBlank, ...rest }) {
+  return <div><label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">{label}</label><select data-testid={testid} {...rest} className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{!noBlank && <option value="">— select —</option>}{options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>;
 }
 function Empty({ text }) { return <div className="col-span-full py-10 text-center text-sm text-muted-foreground border border-dashed border-border rounded-sm">{text}</div>; }

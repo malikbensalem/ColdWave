@@ -176,6 +176,9 @@ class CampaignCreate(BaseModel):
     script_id: Optional[str] = None
     voice_id: Optional[str] = None
     description: Optional[str] = ""
+    audience: Literal["all", "new", "positive", "contacted", "callback", "consented"] = "all"
+    schedule_type: Literal["manual", "scheduled"] = "manual"
+    scheduled_at: Optional[str] = None
 
 
 class CampaignUpdate(BaseModel):
@@ -184,6 +187,9 @@ class CampaignUpdate(BaseModel):
     voice_id: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    audience: Optional[Literal["all", "new", "positive", "contacted", "callback", "consented"]] = None
+    schedule_type: Optional[Literal["manual", "scheduled"]] = None
+    scheduled_at: Optional[str] = None
 
 
 # ---------- Voice ----------

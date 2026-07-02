@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 9 — verified CRM 2.0 (contact enrichment + multi-call history detail sheet + summary/transcript dialogs) and Campaigns 2.0 (analytics per card, queue sheet with Contacted/Upcoming tabs, audience & schedule selectors in New Campaign dialog). Backend: 6/6 pytest cases pass. Frontend: all UI expectations from the review request pass. 3CX live-call actions (campaign-dial-next, call-lead buttons) were verified to RENDER but were deliberately NOT triggered as instructed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verified_passing": [
+    "POST /api/auth/login admin@coldwave.ai/Admin123! => 200 (bearer + httpOnly cookie set)",
+    "GET /api/contacts => each row enriched with call_count, last_call_rating, last_call_summary, last_call_campaign, last_call_date",
+    "GET /api/contacts/{id} for 'Tom O'Brien' => calls[] enriched with campaign_name, rating, summary, next_action; call_count == 1",
+    "GET /api/campaigns => each item includes analytics {times_used, avg_rating, positive_rate, sentiment}",
+    "GET /api/campaigns/{id}/analytics => same shape",
+    "GET /api/campaigns/{id}/queue => {contacted, upcoming, contacted_count, upcoming_count, next, audience} — counts match array lengths",
+    "POST /api/campaigns with audience='positive', schedule_type='scheduled', scheduled_at persists and reflects in list response",
+    "Leads UI: columns Name/Company/Phone/Email/Status/Rating/Last summary/Campaign/Last call/Actions all present",
+    "Leads UI: 'Tom O'Brien' row shows '(1 call)' badge; clicking row opens detail sheet with call-history-<callid> entries",
+    "Leads UI: view-summary-<callid> opens data-testid='call-viewer-dialog' with summary + NEXT ACTION section",
+    "Leads UI: view-transcript-<callid> opens same dialog rendering chat bubbles ('AI AGENT ...')",
+    "Campaigns UI: each card shows audience badge (e.g., ALL LEADS / POSITIVE RESPONDERS) + 3 metrics grid (TIMES USED, AVG RATING, POSITIVE)",
+    "Campaigns UI: campaign-queue-<id> opens campaign-queue-sheet with Contacted/Upcoming counts + queue-tab-upcoming / queue-tab-contacted tabs",
+    "Campaigns UI: New Campaign dialog exposes campaign-audience selector and campaign-schedule-type selector; picking 'scheduled' reveals campaign-scheduled-at datetime input, picking 'manual' hides it",
+    "Campaigns UI: creating 'QA Test Campaign' with audience=positive → appears in list with 'POSITIVE RESPONDERS' badge (screenshot captured, then cleaned up via API DELETE returning 200)"
+  ],
+  "safety_notes": [
+    "campaign-dial-next button was located and confirmed present; NOT clicked (would place a real 3CX call)",
+    "call-lead-<id> and call-lead-detail-button in Leads were NOT clicked; only their presence confirmed",
+    "No POST /api/campaigns/{id}/dial-next and no POST /api/calls/dial were issued"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration9_crm_campaigns.py",
+    "/app/test_reports/pytest/iter9_crm_camp.xml"
+  ],
+  "action_items": [
+    "No blocking action items for CRM 2.0 / Campaigns 2.0. Prior iter8 minor issue (telephony._get_token cache key excludes client_secret) remains and is unrelated to this iteration."
+  ],
+  "critical_code_review_comments": [
+    "routes._enrich_call correctly falls back to analysis.score / analysis.summary — resilient to legacy call docs.",
+    "routes.list_contacts issues one batched find over calls (via {'contact_id': {'$in': ids}}) instead of N per-contact queries — good.",
+    "routes.campaign_queue de-duplicates contacted contacts by first-seen (latest call per contact due to sort) — correct semantics.",
+    "routes.campaign_dial_next reuses campaign_queue() internally to pick next contact — nice DRY reuse; guarded by tcx_enabled and audit-logged.",
+    "Leads.jsx: view-summary/transcript buttons are correctly disabled when the call has no summary/transcript (verified enabled-only click loop works).",
+    "Campaigns.jsx uses CSS-uppercase for metric labels — assertions must be case-insensitive; UI-side text matches spec case in source ('Times used', 'Avg rating', 'Positive').",
+    "campaign-scheduled-at input is a native <input type='datetime-local'> — this is acceptable for a scheduling field per app conventions (not a shadcn calendar), and it correctly appears only when schedule_type='scheduled'.",
+    "models.CampaignCreate correctly makes audience/schedule_type/scheduled_at optional so pre-existing 'manual' campaigns without scheduled_at continue to work."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration9_crm_campaigns.py (new — 6 tests, all passing)"
+  ],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100% (all requested flows)"},
+  "test_credentials": "admin@coldwave.ai / Admin123!",
+  "seed_data_creation": "Created 'QA Test Campaign' during UI test then cleaned up via DELETE /api/campaigns/{id} (status 200). No other seed changes.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Regression suite for CRM 2.0 + Campaigns 2.0 read/create paths: /app/backend/tests/test_iteration9_crm_campaigns.py. All Playwright selectors used in the review request (view-summary-<id>, view-transcript-<id>, call-viewer-dialog, campaign-queue-<id>, campaign-queue-sheet, queue-tab-upcoming/contacted, campaign-audience, campaign-schedule-type, campaign-scheduled-at) resolve correctly. IMPORTANT: 3CX live calling is enabled on the demo org — never trigger campaign-dial-next, call-lead-<id>, or call-lead-detail-button; only verify render.",
+  "rca of the issue": "No new bugs. Both P1 features are working end-to-end. Any test failures observed during the initial Playwright run were purely due to the tester's case-sensitive substring checks vs CSS-uppercased labels; the underlying UI text matches the spec."
+}
