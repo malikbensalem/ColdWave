@@ -72,6 +72,15 @@ class AssignBlueprintRequest(BaseModel):
     blueprint_id: Optional[str] = None
 
 
+class AssignChannelBlueprintRequest(BaseModel):
+    channel: Literal["call", "whatsapp", "sms", "email"]
+    blueprint_id: Optional[str] = None
+
+
+class AdminSetRoleRequest(BaseModel):
+    role: str
+
+
 class DialRequest(BaseModel):
     contact_id: Optional[str] = None
     destination: Optional[str] = None
@@ -181,7 +190,8 @@ class CampaignCreate(BaseModel):
     script_id: Optional[str] = None
     voice_id: Optional[str] = None
     description: Optional[str] = ""
-    audience: Literal["all", "new", "positive", "contacted", "callback", "consented"] = "all"
+    audience: Literal["all", "new", "positive", "contacted", "callback", "consented", "specific"] = "all"
+    contact_ids: Optional[List[str]] = None
     schedule_type: Literal["manual", "scheduled"] = "manual"
     scheduled_at: Optional[str] = None
 
@@ -192,7 +202,8 @@ class CampaignUpdate(BaseModel):
     voice_id: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
-    audience: Optional[Literal["all", "new", "positive", "contacted", "callback", "consented"]] = None
+    audience: Optional[Literal["all", "new", "positive", "contacted", "callback", "consented", "specific"]] = None
+    contact_ids: Optional[List[str]] = None
     schedule_type: Optional[Literal["manual", "scheduled"]] = None
     scheduled_at: Optional[str] = None
 
@@ -256,7 +267,10 @@ class ApprovalEditRequest(BaseModel):
 class VoiceCharacteristicsUpdate(BaseModel):
     name: Optional[str] = None
     persona: Optional[str] = None
-    speed: Optional[float] = None  # 0.7 (slower) – 1.2 (faster); 1.0 = normal
+    speed: Optional[float] = None      # 0.7 (slower) – 1.2 (faster); 1.0 = normal
+    stability: Optional[float] = None  # 0.0 – 1.0 (ElevenLabs)
+    style: Optional[float] = None      # 0.0 – 1.0 (ElevenLabs expressiveness)
+    dynamic: Optional[bool] = None     # AI varies stability/style/speed by context
 
 
 # ---------- Impersonation ----------

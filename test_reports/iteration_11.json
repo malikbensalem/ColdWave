@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 11 — validated batch of new features (per-channel AI blueprints, owner cross-org user/business moderation, campaign 'Specific clients', voice controls incl. Dynamic-delivery, and blueprint/script-driven test-call opening). Backend pytest: 19/19 pass. UI Playwright: all critical flows pass. All demo data restored (blueprints deleted, businesses reinstated, test@test.co reverted to agent+unbanned, QA Specific campaign deleted, voice reset to defaults, personality script deleted).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verified_passing": [
+    "Per-channel AI blueprints — owner CAN create with Channel selector (blueprint-channel-select: global/call/whatsapp/sms); card shows channel badge (blueprint-channel-<id>) rendering 'Call' / 'WhatsApp' / 'SMS' / 'All channels' correctly.",
+    "Per-channel dropdown filtering — Business card selects assign-{call,whatsapp,sms}-blueprint-<oid> correctly filter blueprints by channel (only channel-matching + global blueprints appear in each select).",
+    "Per-channel assignment persistence — PUT /api/admin/businesses/{oid}/channel-blueprint saves and returns channel_blueprints map; verified: assigning WhatsApp blueprint to ColdWave Demo Co survives full page reload; clearing (blueprint_id=null) removes the key.",
+    "Owner-only endpoints enforced — admin@coldwave.ai gets 403 on POST /api/admin/blueprints and GET /api/admin/users (as expected).",
+    "Owner user moderation (UI + API) — change-role-<id> dropdown flips test@test.co agent → admin → agent successfully; toggle-ban-<id> bans (button label becomes 'Unban') and un-bans (label back to 'Ban'). Verified banned/ban_reason persisted server-side.",
+    "Owner user moderation guards — cannot ban the platform owner (400); cannot assign the 'owner' role via /users/{uid}/role (400). Owner row in Users tab correctly shows NO change-role and NO toggle-ban controls.",
+    "Business suspend/reinstate — Suspending Malik's Workspace prompts for reason, sets banned=true and renders 'Suspended' badge (business-banned-<id>). Reinstate clears banned flag and hides badge. Cascade: non-owner users of that org are banned with reason 'business_suspended' (verified in admin code path).",
+    "Campaign 'Specific clients' — audience select exposes 'specific' option; picking it reveals campaign-specific-clients checklist with campaign-client-search and campaign-client-<contact_id> rows. Created 'QA Specific' with 2 checked contacts; campaign persisted with audience='specific', contact_ids=[both selected]. GET /api/campaigns/{id}/queue confirmed audience='specific' and upcoming_ids ⊆ selected (one selected contact was already 'called' in demo data so appeared in Contacted rather than Upcoming — expected).",
+    "Voice controls dialog — edit-voice-speed / edit-voice-stability / edit-voice-style sliders render and are initially enabled; toggling edit-voice-dynamic disables ALL three sliders (verified via el.disabled === true). Save persists dynamic:true (PUT /api/voices/{id}/characteristics). Reload of dialog shows the persisted state. Reset to defaults (dynamic=false, stability=0.5, style=0, speed=1.0) also persists.",
+    "Voice PUT clamps out-of-range values (speed clamped to ≤1.2, stability≥0, style≤1) — backend clamps confirmed via curl.",
+    "Test-call opening is blueprint/script-driven — created a PERSONALITY script, started a test call. call-diagnostics 'Opening mode' reads 'blueprint'. Hardcoded 'Hello, this is your AI assistant calling' string NOT present anywhere in transcript.",
+    "Test-call ended-state — clicking end-call-button transitions to analysis view: new-call-header-button (New Test Call) appears in the header, prospect-input is disabled (input.disabled === true), and analysis toast 'Call analysed' fires. Clicking new-call-header-button returns to the Configure a test call setup screen with start-call-button visible."
+  ],
+  "safety_notes": [
+    "Live 3CX rules respected — did NOT click Call, Dial next, or campaign-dial-next; did NOT hit /api/calls/dial or /api/campaigns/{id}/dial-next.",
+    "Test Calls flow is text role-play (/calls/test/start, /turn, /end) — safe simulated calls only.",
+    "All test data cleaned: QA UI Blueprint Call + QA WhatsApp BP deleted, ColdWave Demo Co channel_blueprints reset (empty), Malik's Workspace reinstated (banned=false), test@test.co role=agent banned=false, QA Specific campaign deleted, edited voice reset to defaults (dynamic=false, stability=0.5, style=0, speed=1.0), personality script 'QA Personality Opening' deleted."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration11_owner_features.py",
+    "/app/test_reports/pytest/iter11_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "PlatformAdmin.jsx BusinessesTab: the channel-blueprint <select> filters blueprints by channel — this is correct product behaviour. Consider adding a helper text when the filtered list is empty so the user understands why an option might not appear (currently just shows '— default —' with no explanation).",
+    "admin.py owner_ban_user cascade on business_ban DOES also flip already-banned users' ban_reason to 'business_suspended', which can OVERWRITE a pre-existing ban_reason. Consider a more defensive $set that only bans users whose banned!=true, otherwise re-ban-ing merges history. Non-blocking.",
+    "routes.py update_voice_characteristics clamps speed at 0.7–1.2 (looser than the 0.85–1.15 the frontend slider offers). Backend + FE ranges consistent enough — non-blocking.",
+    "campaign_queue: when audience='specific', already-called selected contacts do NOT appear in Upcoming but appear in Contacted. This is correct product behaviour, but the frontend copy 'Upcoming' might mislead the user. Consider a hint 'X selected clients already contacted — see Contacted tab'.",
+    "TestCalls.jsx post-end state: prospect-input becomes disabled but the placeholder correctly changes to 'Call ended — start a new test call'. Good UX. The send-message-button also disables — verified.",
+    "Radix Dialog a11y warnings (missing DialogDescription) persist on several dialogs (New Campaign, Voices edit) — non-blocking accessibility polish carried over from iteration 10.",
+    "White-label live-update bug from iteration 10 is NOT re-tested here (out of scope) — still pending main-agent fix per iter10 report."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration11_owner_features.py (new pytest suite; 19 tests)"
+  ],
+  "success_rate": {"backend": "100% (19/19)", "frontend": "100% (all critical selectors + flows verified end-to-end)"},
+  "test_credentials": "Owner: owner@coldwave.ai / Owner123!, Admin: admin@coldwave.ai / Admin123!, disposable agent: test@test.co",
+  "seed_data_creation": "Temporarily created and DELETED: 2 blueprints (call+whatsapp), 1 campaign (QA Specific), 1 personality script (QA Personality Opening). Demo data restored to pre-test state.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All iteration 11 features verified. Confirmed working selectors: blueprint-channel-select, blueprint-channel-<id>, assign-{call|whatsapp|sms}-blueprint-<oid>, business-banned-<oid>, toggle-ban-business-<oid>, change-role-<uid>, toggle-ban-<uid>, campaign-audience (with 'specific' option), campaign-specific-clients, campaign-client-search, campaign-client-<contact_id>, campaign-queue-<id>, edit-voice-speed/stability/style/dynamic, save-voice-characteristics, new-call-header-button, end-call-button, call-diagnostics. Route for Platform Admin is /admin (not /platform-admin). test@test.co exists in ColdWave Demo Co with role=agent, banned=false. Live 3CX is enabled — avoid dial buttons. White-label live-update bug from iter10 still pending fix."
+}

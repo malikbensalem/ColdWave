@@ -34,7 +34,10 @@ if not exist "frontend\node_modules" (
   pushd frontend & call yarn install & popd
 )
 echo [coldwave] Ensuring backend dependencies...
-python -m pip install -q -r backend\requirements.txt --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
+python -m pip install -q -r backend\requirements.txt
+rem emergentintegrations is Emergent-hosted (private index) and optional. Non-fatal locally:
+rem the app falls back to your own provider key from Settings -> AI.
+python -m pip install -q emergentintegrations --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ >nul 2>&1 && (echo [coldwave] emergentintegrations installed.) || (echo [coldwave] emergentintegrations not installed - using your own provider key from Settings -> AI.)
 
 echo [coldwave] Database will be auto-initialised on backend startup
 echo           (seeds owner, admin, default AI blueprint and demo data).

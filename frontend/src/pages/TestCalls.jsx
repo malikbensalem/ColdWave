@@ -18,6 +18,7 @@ export default function TestCalls() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [analysis, setAnalysis] = useState(null);
+  const [ended, setEnded] = useState(false);
   const [voiceGender, setVoiceGender] = useState("female");
   const [callMeta, setCallMeta] = useState(null);
   const endRef = useRef(null);
@@ -49,6 +50,7 @@ export default function TestCalls() {
       const v = voices.find((x) => x.id === setup.voice_id);
       setVoiceGender(v?.gender || "female");
       setCall(data);
+      setEnded(false);
       setCallMeta({ tts_provider: data.tts_provider, tts_error: data.tts_error, opening_meta: data.opening_meta });
       setMessages([{ role: "agent", content: data.opening }]);
       setAnalysis(null);
@@ -79,12 +81,13 @@ export default function TestCalls() {
     try {
       const { data } = await api.post(`/calls/test/${call.call_id}/end`);
       setAnalysis(data.analysis);
+      setEnded(true);
       toast.success("Call analysed");
-    } catch (err) { toast.error(apiErr(err)); }
+    } catch (err) { setEnded(true); toast.error(apiErr(err)); }
     finally { setBusy(false); }
   };
 
-  const reset = () => { setCall(null); setMessages([]); setAnalysis(null); setSetup({ campaign_id: "", script_id: "", voice_id: "", contact_id: "" }); };
+  const reset = () => { stopSpeak(); setCall(null); setEnded(false); setMessages([]); setAnalysis(null); setCallMeta(null); setSetup({ campaign_id: "", script_id: "", voice_id: "", contact_id: "" }); };
 
   return (
     <div className="space-y-5 animate-fadeup" data-testid="test-calls-page">
@@ -111,10 +114,14 @@ export default function TestCalls() {
           <div className="lg:col-span-2 bg-card border border-border rounded-sm flex flex-col h-[60vh]">
             <div className="h-12 border-b border-border flex items-center justify-between px-4">
               <div className="flex items-center gap-2 text-sm font-medium">
-                <span className="h-2 w-2 rounded-full bg-success live-dot" /> Live test · {call.voice?.name}
+                <span className={`h-2 w-2 rounded-full ${ended ? "bg-muted-foreground" : "bg-success live-dot"}`} /> {ended ? "Call ended" : "Live test"} · {call.voice?.name}
                 <SpeakerHigh size={15} className="text-muted-foreground" />
               </div>
-              <button data-testid="end-call-button" onClick={end} disabled={busy} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-sm bg-destructive text-destructive-foreground text-sm font-medium hover:opacity-90"><PhoneSlash size={15} weight="fill" /> End &amp; Analyse</button>
+              {ended ? (
+                <button data-testid="new-call-header-button" onClick={reset} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90"><PhoneCall size={15} weight="fill" /> New Test Call</button>
+              ) : (
+                <button data-testid="end-call-button" onClick={end} disabled={busy} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-sm bg-destructive text-destructive-foreground text-sm font-medium hover:opacity-90"><PhoneSlash size={15} weight="fill" /> End &amp; Analyse</button>
+              )}
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {messages.map((m, i) => (
@@ -129,10 +136,10 @@ export default function TestCalls() {
               <div ref={endRef} />
             </div>
             <div className="border-t border-border p-3 flex gap-2">
-              <input data-testid="prospect-input" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()}
-                placeholder="Reply as the prospect… (e.g. 'Not interested, remove me')"
-                className="flex-1 h-10 px-3 rounded-sm border border-input bg-card text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-              <button data-testid="send-message-button" onClick={send} disabled={busy} className="h-10 px-4 bg-primary text-primary-foreground rounded-sm hover:opacity-90 disabled:opacity-60"><PaperPlaneRight size={16} weight="fill" /></button>
+              <input data-testid="prospect-input" value={input} disabled={ended || busy} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()}
+                placeholder={ended ? "Call ended — start a new test call" : "Reply as the prospect… (e.g. 'Not interested, remove me')"}
+                className="flex-1 h-10 px-3 rounded-sm border border-input bg-card text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60" />
+              <button data-testid="send-message-button" onClick={send} disabled={busy || ended} className="h-10 px-4 bg-primary text-primary-foreground rounded-sm hover:opacity-90 disabled:opacity-60"><PaperPlaneRight size={16} weight="fill" /></button>
             </div>
           </div>
 

@@ -34,7 +34,12 @@ ok "Environment files validated."
 if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
   log "Installing frontend dependencies (first run)…"; ( cd "$FRONTEND_DIR" && yarn install --frozen-lockfile || yarn install )
 fi
-log "Ensuring backend dependencies…"; python3 -m pip install -q -r "$BACKEND_DIR/requirements.txt" --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ || warn "pip install reported issues; continuing."
+log "Ensuring backend dependencies…"; python3 -m pip install -q -r "$BACKEND_DIR/requirements.txt" || warn "pip install reported issues; continuing."
+# emergentintegrations is Emergent-hosted (private index) and only powers the built-in Emergent AI key.
+# It is optional: locally the app uses your own provider key (Settings → AI), so this step is non-fatal.
+python3 -m pip install -q emergentintegrations --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ >/dev/null 2>&1 \
+  && log "emergentintegrations installed (built-in Emergent AI key enabled)." \
+  || warn "emergentintegrations not installed — using your own provider key from Settings → AI (expected for local dev)."
 
 # ---- 4. Reachability of MongoDB ----------------------------------------------
 MONGO_URL_VAL=$(grep -E "^MONGO_URL=" "$BACKEND_DIR/.env" | cut -d= -f2- | tr -d '"')

@@ -15,7 +15,7 @@ from telephony import test_connection as telephony_test, make_call as telephony_
 from integrations import (
     VOICE_CATALOG, get_voice, generate_voice_preview, generate_script,
     agent_reply, analyze_transcript, generate_tts, select_tts_provider,
-    validate_elevenlabs_key, generate_kb_opening, get_llm_models, validate_llm_key, llm_config,
+    validate_elevenlabs_key, generate_kb_opening, generate_opening_line, get_llm_models, validate_llm_key, llm_config,
     get_elevenlabs_models,
 )
 from audit import record_audit
@@ -38,13 +38,14 @@ def clean(doc: dict) -> dict:
     return doc
 
 
-async def attach_system_prefix(org: dict) -> dict:
-    """Resolve the effective AI system prefix (assigned blueprint + org extension)."""
+async def attach_system_prefix(org: dict, channel: str = "call") -> dict:
+    """Resolve the effective AI system prefix (channel blueprint → org blueprint → org extension)."""
     if not org:
         return org
+    bp_id = (org.get("channel_blueprints") or {}).get(channel) or org.get("blueprint_id")
     bp_prompt = ""
-    if org.get("blueprint_id"):
-        bp = await db.ai_blueprints.find_one({"id": org["blueprint_id"]}, {"_id": 0})
+    if bp_id:
+        bp = await db.ai_blueprints.find_one({"id": bp_id}, {"_id": 0})
         bp_prompt = (bp or {}).get("prompt", "")
     org_p = org.get("ai_system_prompt", "")
     parts = [p for p in [bp_prompt, org_p] if p]
@@ -291,10 +292,12 @@ async def list_campaigns(user: dict = Depends(get_current_user)):
 
 @router.post("/campaigns")
 async def create_campaign(req: CampaignCreate, user: dict = Depends(get_current_user)):
+    audience = "specific" if req.contact_ids else req.audience
     doc = {
         "id": new_id("camp"), "org_id": user["org_id"], "name": req.name,
         "script_id": req.script_id, "voice_id": req.voice_id, "description": req.description or "",
-        "audience": req.audience, "schedule_type": req.schedule_type, "scheduled_at": req.scheduled_at,
+        "audience": audience, "contact_ids": req.contact_ids or [],
+        "schedule_type": req.schedule_type, "scheduled_at": req.scheduled_at,
         "status": "draft", "created_at": now_utc().isoformat(),
     }
     await db.campaigns.insert_one(dict(doc))
@@ -356,10 +359,15 @@ async def campaign_queue(campaign_id: str, user: dict = Depends(get_current_user
             "summary": enriched.get("summary"), "status": cl.get("status"), "called_at": cl.get("created_at"),
         })
 
-    # Upcoming: audience-matched contacts not yet called on this campaign (skip opted-out/DNC).
-    q = {"org_id": user["org_id"], "opted_out": {"$ne": True},
-         "status": {"$nin": ["opted_out", "dnc"]}}
-    q.update(CAMPAIGN_AUDIENCE_QUERY.get(camp.get("audience", "all"), {}))
+    # Upcoming: audience-matched (or the campaign's specific clients) not yet called; skip opted-out/DNC.
+    specific_ids = camp.get("contact_ids") or []
+    if camp.get("audience") == "specific" and specific_ids:
+        q = {"org_id": user["org_id"], "id": {"$in": specific_ids},
+             "opted_out": {"$ne": True}, "status": {"$nin": ["opted_out", "dnc"]}}
+    else:
+        q = {"org_id": user["org_id"], "opted_out": {"$ne": True},
+             "status": {"$nin": ["opted_out", "dnc"]}}
+        q.update(CAMPAIGN_AUDIENCE_QUERY.get(camp.get("audience", "all"), {}))
     audience_contacts = await db.contacts.find(q, {"_id": 0}).sort("created_at", 1).to_list(5000)
     upcoming = [
         {"contact_id": c["id"], "name": c["name"], "phone": c["phone"], "company": c.get("company", ""), "status": c.get("status")}
@@ -436,7 +444,10 @@ async def list_voices(user: dict = Depends(get_current_user)):
             "display_name": ov.get("name") or v["name"],
             "persona": ov.get("persona") or v.get("persona", ""),
             "speed": ov.get("speed", 1.0),
-            "customized": bool(ov.get("name") or ov.get("persona") or ov.get("speed")),
+            "stability": ov.get("stability", 0.5),
+            "style": ov.get("style", 0.0),
+            "dynamic": bool(ov.get("dynamic", False)),
+            "customized": bool(ov.get("name") or ov.get("persona") or ov.get("speed") or ov.get("dynamic") or ov.get("stability") is not None),
         })
     return {"voices": voices, "elevenlabs_enabled": enabled}
 
@@ -454,6 +465,12 @@ async def update_voice_characteristics(voice_id: str, req: VoiceCharacteristicsU
         cur["persona"] = req.persona
     if req.speed is not None:
         cur["speed"] = max(0.7, min(1.2, float(req.speed)))
+    if req.stability is not None:
+        cur["stability"] = max(0.0, min(1.0, float(req.stability)))
+    if req.style is not None:
+        cur["style"] = max(0.0, min(1.0, float(req.style)))
+    if req.dynamic is not None:
+        cur["dynamic"] = bool(req.dynamic)
     chars[voice_id] = cur
     await db.organizations.update_one({"id": user["org_id"]}, {"$set": {"voice_characteristics": chars}})
     await audit(user["org_id"], user, "voice_characteristics_update", voice_id, entity="voice", entity_id=voice_id, after=cur)
@@ -546,23 +563,34 @@ async def start_test_call(req: TestCallStartRequest, user: dict = Depends(get_cu
         if contact and contact.get("opted_out"):
             raise HTTPException(403, "Contact has opted out / is on the Do-Not-Call list.")
 
-    # opening line — scripted (default) or KB-guided.
-    # Scripts use stage labels like "[OPENING] Hi, this is Alex…" — strip the label, keep the words.
-    import re as _re
-    scripted_opening = "Hello, this is your AI assistant calling. Do you have a quick moment?"
-    for line in script_content.split("\n"):
-        stripped = _re.sub(r"^\s*\[[^\]]*\]\s*", "", line).strip()
-        if stripped:
-            scripted_opening = stripped
-            break
+    voice = get_voice(voice_id) if voice_id else None
+    ov = (org or {}).get("voice_characteristics", {}).get(voice_id, {}) if voice_id else {}
+    vname = ov.get("name") or (voice["name"] if voice else "your assistant")
+    vpersona = ov.get("persona") or (voice.get("persona", "") if voice else "")
 
-    opening = scripted_opening
-    opening_meta = {"mode": "scripted", "sources": [], "fallback": False, "reason": "scripted_default"}
-    if (org or {}).get("opening_mode") == "kb":
-        kb_entries = active_kb
+    # Inject the voice's identity (name + persona) so the agent knows who it is if asked.
+    if voice:
+        identity = f"Your name is {vname}. {vpersona}".strip()
+        company_overview = f"[YOUR IDENTITY]\n{identity}\n\n{company_overview}".strip()
+
+    # ---- Opening line resolution (depends on script/blueprint, not a fixed string) ----
+    import re as _re
+    opening, opening_meta = None, None
+
+    # 1) Line-by-line script: use its first spoken line (strip [STAGE] labels).
+    if script and script_type == "line_by_line":
+        for line in script_content.split("\n"):
+            stripped = _re.sub(r"^\s*\[[^\]]*\]\s*", "", line).strip()
+            if stripped:
+                opening = stripped
+                opening_meta = {"mode": "scripted", "sources": [], "fallback": False, "reason": "script_first_line"}
+                break
+
+    # 2) KB-guided opening (org setting).
+    if opening is None and (org or {}).get("opening_mode") == "kb":
         product_context = (script.get("objective") if script else "") or "Cold outreach call"
         kb_res = await generate_kb_opening(
-            org, kb_entries, product_context,
+            org, active_kb, product_context,
             creativity=(org or {}).get("opening_creativity", "medium"),
             max_length=int((org or {}).get("opening_max_length", 220)),
             session_id=f"open_{user['org_id']}",
@@ -570,18 +598,19 @@ async def start_test_call(req: TestCallStartRequest, user: dict = Depends(get_cu
         if kb_res["opening"] and not kb_res["fallback"]:
             opening = kb_res["opening"]
             opening_meta = {"mode": "kb", "sources": kb_res["sources"], "fallback": False, "reason": kb_res["reason"]}
-        else:
-            opening_meta = {"mode": "scripted", "sources": kb_res["sources"], "fallback": True, "reason": kb_res["reason"]}
 
-    voice = get_voice(voice_id) if voice_id else None
+    # 3) Personality-driven (or no usable scripted line): generate from persona + blueprint.
+    if opening is None:
+        gen = await generate_opening_line(
+            org, script_content, personality, script_type, company_overview, vname, f"open_{user['org_id']}")
+        if gen:
+            opening = gen
+            opening_meta = {"mode": "blueprint", "sources": [], "fallback": False, "reason": "persona_generated"}
 
-    # Inject the voice's identity (name + persona) so the agent knows who it is if asked.
-    if voice:
-        ov = (org or {}).get("voice_characteristics", {}).get(voice_id, {})
-        vname = ov.get("name") or voice["name"]
-        vpersona = ov.get("persona") or voice.get("persona", "")
-        identity = f"Your name is {vname}. {vpersona}".strip()
-        company_overview = f"[YOUR IDENTITY]\n{identity}\n\n{company_overview}".strip()
+    # 4) Final persona-aware fallback (LLM unavailable).
+    if opening is None:
+        opening = f"Hi, this is {vname}. Do you have a quick moment?"
+        opening_meta = {"mode": "fallback", "sources": [], "fallback": True, "reason": "llm_unavailable"}
 
     # TTS: deterministic provider selection (ElevenLabs when configured) — no silent fallback
     tts = await generate_tts(org, voice_id, opening) if voice_id else {"provider": "browser", "audio_url": None, "reason": "no_voice", "error": None}

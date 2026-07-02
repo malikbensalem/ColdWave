@@ -117,9 +117,14 @@ CHANNEL_INSTRUCTIONS = {
 
 
 async def _channel_system_prompt(org: dict, channel: str) -> str:
-    """Resolve the AI system prompt for a channel: channel-specific blueprint (if any),
-    else the global default blueprint, plus the org's own AI extension + channel style."""
-    bp = await db.ai_blueprints.find_one({"channel": channel}, {"_id": 0}, sort=[("created_at", -1)])
+    """Resolve the AI system prompt for a channel: the org's assigned channel blueprint (if any),
+    else a channel-specific blueprint, else the global default; plus org AI extension + channel style."""
+    bp = None
+    assigned = (org or {}).get("channel_blueprints", {}).get(channel)
+    if assigned:
+        bp = await db.ai_blueprints.find_one({"id": assigned}, {"_id": 0})
+    if not bp:
+        bp = await db.ai_blueprints.find_one({"channel": channel}, {"_id": 0}, sort=[("created_at", -1)])
     if not bp:
         bp = await db.ai_blueprints.find_one({"is_default": True}, {"_id": 0})
     base = (bp or {}).get("prompt", "")

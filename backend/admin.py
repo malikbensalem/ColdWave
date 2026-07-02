@@ -1,7 +1,8 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from database import db
-from models import BlueprintCreate, BlueprintUpdate, AssignBlueprintRequest, now_utc, new_id
+from models import (BlueprintCreate, BlueprintUpdate, AssignBlueprintRequest,
+                    AssignChannelBlueprintRequest, AdminSetRoleRequest, BanRequest, now_utc, new_id)
 
 logger = logging.getLogger("coldwave.admin")
 
@@ -41,6 +42,9 @@ def build_admin_router(get_current_user, require_owner, record_audit):
                 "id": o["id"], "name": o["name"], "created_at": o.get("created_at"),
                 "blueprint_id": o.get("blueprint_id"),
                 "blueprint_name": bpmap.get(o.get("blueprint_id"), ""),
+                "channel_blueprints": o.get("channel_blueprints", {}),
+                "banned": bool(o.get("banned")),
+                "ban_reason": o.get("ban_reason"),
                 "users": await db.users.count_documents({"org_id": o["id"]}),
                 "contacts": await db.contacts.count_documents({"org_id": o["id"]}),
                 "campaigns": await db.campaigns.count_documents({"org_id": o["id"]}),
@@ -117,5 +121,81 @@ def build_admin_router(get_current_user, require_owner, record_audit):
         await record_audit(user["org_id"], user["email"], "blueprint_assign", "organization", oid,
                            after={"blueprint_id": req.blueprint_id})
         return {"ok": True, "blueprint_id": req.blueprint_id}
+
+    @router.put("/businesses/{oid}/channel-blueprint")
+    async def assign_channel_blueprint(oid: str, req: AssignChannelBlueprintRequest, user: dict = Depends(require_owner)):
+        org = await db.organizations.find_one({"id": oid}, {"_id": 0})
+        if not org:
+            raise HTTPException(404, "Business not found")
+        if req.blueprint_id and not await db.ai_blueprints.find_one({"id": req.blueprint_id}):
+            raise HTTPException(404, "Blueprint not found")
+        cb = org.get("channel_blueprints", {}) or {}
+        if req.blueprint_id:
+            cb[req.channel] = req.blueprint_id
+        else:
+            cb.pop(req.channel, None)
+        await db.organizations.update_one({"id": oid}, {"$set": {"channel_blueprints": cb}})
+        await record_audit(user["org_id"], user["email"], "channel_blueprint_assign", "organization", oid,
+                           after={"channel": req.channel, "blueprint_id": req.blueprint_id})
+        return {"ok": True, "channel_blueprints": cb}
+
+    # ---- Owner cross-org user & business moderation ----
+    @router.post("/users/{uid}/ban")
+    async def owner_ban_user(uid: str, req: BanRequest, user: dict = Depends(require_owner)):
+        target = await db.users.find_one({"id": uid}, {"_id": 0})
+        if not target:
+            raise HTTPException(404, "User not found")
+        if target.get("role") == "owner":
+            raise HTTPException(400, "The platform owner cannot be banned.")
+        await db.users.update_one({"id": uid}, {"$set": {
+            "banned": True, "ban_reason": req.reason, "banned_by": user["email"], "banned_at": now_utc().isoformat()}})
+        await record_audit(user["org_id"], user["email"], "user_ban", "user", uid, after={"reason": req.reason})
+        return {"ok": True}
+
+    @router.post("/users/{uid}/unban")
+    async def owner_unban_user(uid: str, user: dict = Depends(require_owner)):
+        await db.users.update_one({"id": uid}, {"$set": {"banned": False},
+                                                "$unset": {"ban_reason": "", "banned_by": "", "banned_at": ""}})
+        await record_audit(user["org_id"], user["email"], "user_unban", "user", uid)
+        return {"ok": True}
+
+    @router.put("/users/{uid}/role")
+    async def owner_set_user_role(uid: str, req: AdminSetRoleRequest, user: dict = Depends(require_owner)):
+        target = await db.users.find_one({"id": uid}, {"_id": 0})
+        if not target:
+            raise HTTPException(404, "User not found")
+        if target.get("role") == "owner" or req.role == "owner":
+            raise HTTPException(400, "The owner role cannot be assigned or changed here.")
+        # Role must exist for that user's business (system roles admin/agent always allowed).
+        if req.role not in ("admin", "agent"):
+            exists = await db.roles.find_one({"org_id": target["org_id"], "name": req.role})
+            if not exists:
+                raise HTTPException(400, f"Role '{req.role}' does not exist in that business.")
+        await db.users.update_one({"id": uid}, {"$set": {"role": req.role}})
+        await record_audit(user["org_id"], user["email"], "user_role_change", "user", uid, after={"role": req.role})
+        return {"ok": True, "role": req.role}
+
+    @router.post("/businesses/{oid}/ban")
+    async def ban_business(oid: str, req: BanRequest, user: dict = Depends(require_owner)):
+        org = await db.organizations.find_one({"id": oid}, {"_id": 0})
+        if not org:
+            raise HTTPException(404, "Business not found")
+        await db.organizations.update_one({"id": oid}, {"$set": {
+            "banned": True, "ban_reason": req.reason, "banned_by": user["email"], "banned_at": now_utc().isoformat()}})
+        # Cascade: block all its users (reuses the existing banned-user login gate) without touching owners.
+        await db.users.update_many(
+            {"org_id": oid, "role": {"$ne": "owner"}},
+            {"$set": {"banned": True, "ban_reason": "business_suspended", "banned_at": now_utc().isoformat()}})
+        await record_audit(user["org_id"], user["email"], "business_ban", "organization", oid, after={"reason": req.reason})
+        return {"ok": True}
+
+    @router.post("/businesses/{oid}/unban")
+    async def unban_business(oid: str, user: dict = Depends(require_owner)):
+        await db.organizations.update_one({"id": oid}, {"$set": {"banned": False},
+                                                        "$unset": {"ban_reason": "", "banned_by": "", "banned_at": ""}})
+        await db.users.update_many({"org_id": oid, "ban_reason": "business_suspended"},
+                                   {"$set": {"banned": False}, "$unset": {"ban_reason": "", "banned_at": ""}})
+        await record_audit(user["org_id"], user["email"], "business_unban", "organization", oid)
+        return {"ok": True}
 
     return router

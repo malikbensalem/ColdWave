@@ -39,30 +39,37 @@ const AUDIENCES = [
   { value: "callback", label: "Callback due" },
   { value: "positive", label: "Positive responders" },
   { value: "consented", label: "Consented (GDPR)" },
+  { value: "specific", label: "Specific clients" },
 ];
 
 function CampaignsTab() {
   const [items, setItems] = useState([]);
   const [scripts, setScripts] = useState([]);
   const [voices, setVoices] = useState([]);
+  const [contacts, setContacts] = useState([]);
+  const [contactSearch, setContactSearch] = useState("");
   const [open, setOpen] = useState(false);
   const [queueFor, setQueueFor] = useState(null);
-  const [form, setForm] = useState({ name: "", description: "", script_id: "", voice_id: "", audience: "all", schedule_type: "manual", scheduled_at: "" });
+  const [form, setForm] = useState({ name: "", description: "", script_id: "", voice_id: "", audience: "all", contact_ids: [], schedule_type: "manual", scheduled_at: "" });
 
   const load = useCallback(async () => {
-    const [c, s, v] = await Promise.all([api.get("/campaigns"), api.get("/scripts"), api.get("/voices")]);
-    setItems(c.data); setScripts(s.data); setVoices(v.data.voices);
+    const [c, s, v, ct] = await Promise.all([api.get("/campaigns"), api.get("/scripts"), api.get("/voices"), api.get("/contacts")]);
+    setItems(c.data); setScripts(s.data); setVoices(v.data.voices); setContacts(ct.data);
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  const toggleContact = (id) => setForm((f) => ({ ...f, contact_ids: f.contact_ids.includes(id) ? f.contact_ids.filter((x) => x !== id) : [...f.contact_ids, id] }));
+
   const create = async (e) => {
     e.preventDefault();
+    if (form.audience === "specific" && form.contact_ids.length === 0) { toast.error("Pick at least one client, or choose a different audience."); return; }
     try {
       const payload = { ...form };
       if (payload.schedule_type !== "scheduled") payload.scheduled_at = null;
+      if (payload.audience !== "specific") payload.contact_ids = null;
       await api.post("/campaigns", payload);
       toast.success("Campaign created"); setOpen(false);
-      setForm({ name: "", description: "", script_id: "", voice_id: "", audience: "all", schedule_type: "manual", scheduled_at: "" });
+      setForm({ name: "", description: "", script_id: "", voice_id: "", audience: "all", contact_ids: [], schedule_type: "manual", scheduled_at: "" });
       load();
     }
     catch (err) { toast.error(apiErr(err)); }
@@ -83,6 +90,23 @@ function CampaignsTab() {
               <Field label="Campaign name" testid="campaign-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
               <Field label="Description" testid="campaign-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
               <Sel label="Target audience (CRM filter)" testid="campaign-audience" value={form.audience} onChange={(e) => setForm({ ...form, audience: e.target.value })} options={AUDIENCES} noBlank />
+              {form.audience === "specific" && (
+                <div data-testid="campaign-specific-clients">
+                  <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Pick clients ({form.contact_ids.length} selected)</label>
+                  <input data-testid="campaign-client-search" value={contactSearch} onChange={(e) => setContactSearch(e.target.value)} placeholder="Search leads…"
+                    className="mt-1 h-9 w-full rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                  <div className="mt-2 max-h-44 overflow-y-auto border border-border rounded-sm divide-y divide-border/60">
+                    {contacts.filter((c) => !contactSearch || `${c.name} ${c.company} ${c.phone}`.toLowerCase().includes(contactSearch.toLowerCase())).slice(0, 100).map((c) => (
+                      <label key={c.id} data-testid={`campaign-client-${c.id}`} className="flex items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-accent cursor-pointer">
+                        <input type="checkbox" checked={form.contact_ids.includes(c.id)} onChange={() => toggleContact(c.id)} className="h-4 w-4" />
+                        <span className="font-medium">{c.name}</span>
+                        <span className="text-xs text-muted-foreground ml-auto tnum">{c.phone}</span>
+                      </label>
+                    ))}
+                    {contacts.length === 0 && <div className="px-2.5 py-3 text-xs text-muted-foreground">No leads yet — add leads in the CRM first.</div>}
+                  </div>
+                </div>
+              )}
               <Sel label="Script" testid="campaign-script" value={form.script_id} onChange={(e) => setForm({ ...form, script_id: e.target.value })} options={scripts.map((s) => ({ value: s.id, label: s.name }))} />
               <Sel label="AI Voice" testid="campaign-voice" value={form.voice_id} onChange={(e) => setForm({ ...form, voice_id: e.target.value })} options={voices.map((v) => ({ value: v.id, label: `${v.name} (${v.gender}, ${v.accent})` }))} />
               <Sel label="Launch" testid="campaign-schedule-type" value={form.schedule_type} onChange={(e) => setForm({ ...form, schedule_type: e.target.value })} options={[{ value: "manual", label: "Manual (dial from queue)" }, { value: "scheduled", label: "Scheduled" }]} noBlank />
@@ -389,7 +413,7 @@ function VoicesTab() {
   const [playing, setPlaying] = useState(null);
   const [sample, setSample] = useState("Hello, this is Alex calling from ColdWave. Have I caught you at a good time?");
   const [editVoice, setEditVoice] = useState(null);
-  const [editForm, setEditForm] = useState({ name: "", persona: "", speed: 1.0 });
+  const [editForm, setEditForm] = useState({ name: "", persona: "", speed: 1.0, stability: 0.5, style: 0.0, dynamic: false });
 
   const load = useCallback(async () => {
     const r = await api.get("/voices");
@@ -418,7 +442,7 @@ function VoicesTab() {
     } catch (e) { toast.error("Preview failed"); setPlaying(null); }
   };
 
-  const openEdit = (v) => { setEditForm({ name: v.display_name || v.name, persona: v.persona || "", speed: v.speed || 1.0 }); setEditVoice(v); };
+  const openEdit = (v) => { setEditForm({ name: v.display_name || v.name, persona: v.persona || "", speed: v.speed || 1.0, stability: v.stability ?? 0.5, style: v.style ?? 0.0, dynamic: !!v.dynamic }); setEditVoice(v); };
   const saveEdit = async () => {
     try {
       await api.put(`/voices/${editVoice.id}/characteristics`, editForm);
@@ -484,12 +508,36 @@ function VoicesTab() {
                 <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Speaking speed</label>
                 <span className="text-xs font-semibold tnum" data-testid="edit-voice-speed-value">{Number(editForm.speed).toFixed(2)}×</span>
               </div>
-              <input type="range" min="0.7" max="1.2" step="0.05" data-testid="edit-voice-speed"
+              <input type="range" min="0.7" max="1.2" step="0.05" data-testid="edit-voice-speed" disabled={editForm.dynamic}
                 value={editForm.speed} onChange={(e) => setEditForm({ ...editForm, speed: parseFloat(e.target.value) })}
-                className="mt-2 w-full accent-primary" />
+                className="mt-2 w-full accent-primary disabled:opacity-40" />
               <div className="flex justify-between text-[10px] text-muted-foreground mt-0.5"><span>Slower (0.7×)</span><span>Normal</span><span>Faster (1.2×)</span></div>
-              <p className="text-xs text-muted-foreground mt-1">Applies to ElevenLabs studio audio. Note: extreme speeds can reduce naturalness; 0.9–1.1× is recommended.</p>
             </div>
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Stability</label>
+                <span className="text-xs font-semibold tnum" data-testid="edit-voice-stability-value">{Number(editForm.stability).toFixed(2)}</span>
+              </div>
+              <input type="range" min="0" max="1" step="0.05" data-testid="edit-voice-stability" disabled={editForm.dynamic}
+                value={editForm.stability} onChange={(e) => setEditForm({ ...editForm, stability: parseFloat(e.target.value) })}
+                className="mt-2 w-full accent-primary disabled:opacity-40" />
+              <div className="flex justify-between text-[10px] text-muted-foreground mt-0.5"><span>Variable</span><span>Stable</span></div>
+            </div>
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Style / expressiveness</label>
+                <span className="text-xs font-semibold tnum" data-testid="edit-voice-style-value">{Number(editForm.style).toFixed(2)}</span>
+              </div>
+              <input type="range" min="0" max="1" step="0.05" data-testid="edit-voice-style" disabled={editForm.dynamic}
+                value={editForm.style} onChange={(e) => setEditForm({ ...editForm, style: parseFloat(e.target.value) })}
+                className="mt-2 w-full accent-primary disabled:opacity-40" />
+              <div className="flex justify-between text-[10px] text-muted-foreground mt-0.5"><span>Neutral</span><span>Expressive</span></div>
+            </div>
+            <label className="flex items-start gap-2 text-sm p-3 rounded-sm border border-border bg-secondary/40">
+              <input type="checkbox" data-testid="edit-voice-dynamic" checked={editForm.dynamic} onChange={(e) => setEditForm({ ...editForm, dynamic: e.target.checked })} className="h-4 w-4 mt-0.5" />
+              <span><span className="font-semibold">Dynamic delivery</span><span className="block text-xs text-muted-foreground">Let the AI vary stability, style &amp; speed automatically based on what it's saying (questions, excitement, long explanations). Overrides the manual sliders above.</span></span>
+            </label>
+            <p className="text-xs text-muted-foreground">Only the options ElevenLabs exposes (stability, style, speed) are adjusted — there is no separate pitch control.</p>
           </div>
           <DialogFooter><button data-testid="save-voice-characteristics" onClick={saveEdit} className="h-10 px-4 bg-primary text-primary-foreground rounded-sm text-sm font-medium">Save</button></DialogFooter>
         </DialogContent>

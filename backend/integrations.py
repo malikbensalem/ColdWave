@@ -3,7 +3,17 @@ import base64
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+# emergentintegrations is only available via Emergent's private index. Make it optional so the
+# app runs locally (where the user supplies their own provider key in Settings → AI); we fall
+# back to calling the provider directly via litellm.
+try:
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    _HAS_EMERGENT = True
+except Exception:  # pragma: no cover
+    LlmChat = None
+    UserMessage = None
+    _HAS_EMERGENT = False
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -111,8 +121,14 @@ async def validate_llm_key(provider: str, api_key: str, model: str = "") -> dict
         return {"valid": False, "message": "No API key provided."}
     use_model = model if model in LLM_MODELS[provider] else DEFAULT_MODEL[provider]
     try:
-        chat = LlmChat(api_key=api_key, session_id="keycheck", system_message="Reply with 'ok'.").with_model(provider, use_model)
-        await chat.send_message(UserMessage(text="ping"))
+        if _HAS_EMERGENT:
+            chat = LlmChat(api_key=api_key, session_id="keycheck", system_message="Reply with 'ok'.").with_model(provider, use_model)
+            await chat.send_message(UserMessage(text="ping"))
+        else:
+            import litellm
+            mdl = f"{_LITELLM_PREFIX.get(provider, '')}{use_model}"
+            await litellm.acompletion(model=mdl, api_key=api_key,
+                                      messages=[{"role": "user", "content": "ping"}], max_tokens=5)
         return {"valid": True, "message": f"{provider} key works with {use_model}."}
     except Exception as e:
         msg = str(e)
@@ -124,7 +140,7 @@ async def validate_llm_key(provider: str, api_key: str, model: str = "") -> dict
         return {"valid": False, "message": f"Validation failed: {msg[:160]}"}
 
 
-def _chat(session_id: str, system_message: str, org: dict = None) -> LlmChat:
+def _chat(session_id: str, system_message: str, org: dict = None) -> "LlmChat":
     cfg = llm_config(org or {})
     prefix = (org or {}).get("_system_prefix", "")
     sys_msg = f"{prefix}\n\n{system_message}" if prefix else system_message
@@ -135,10 +151,37 @@ def _chat(session_id: str, system_message: str, org: dict = None) -> LlmChat:
     ).with_model(cfg["provider"], cfg["model"])
 
 
+# litellm model prefixes for the local/direct fallback path.
+_LITELLM_PREFIX = {"openai": "", "anthropic": "anthropic/", "gemini": "gemini/"}
+
+
+async def _direct_llm_generate(cfg: dict, system_message: str, prompt: str, prefix: str = "") -> str:
+    """Provider-direct call (used when emergentintegrations is unavailable, e.g. local dev).
+    Requires a workspace-supplied provider key (cfg['source'] == 'custom')."""
+    import litellm
+    sys_msg = f"{prefix}\n\n{system_message}" if prefix else system_message
+    model = f"{_LITELLM_PREFIX.get(cfg['provider'], '')}{cfg['model']}"
+    resp = await litellm.acompletion(
+        model=model, api_key=cfg["api_key"],
+        messages=[{"role": "system", "content": sys_msg}, {"role": "user", "content": prompt}],
+    )
+    return (resp["choices"][0]["message"]["content"] or "") if resp else ""
+
+
 async def llm_generate(session_id: str, system_message: str, prompt: str, org: dict = None) -> str:
-    chat = _chat(session_id, system_message, org)
-    resp = await chat.send_message(UserMessage(text=prompt))
-    return resp if isinstance(resp, str) else str(resp)
+    cfg = llm_config(org or {})
+    prefix = (org or {}).get("_system_prefix", "")
+    if _HAS_EMERGENT:
+        chat = _chat(session_id, system_message, org)
+        resp = await chat.send_message(UserMessage(text=prompt))
+        return resp if isinstance(resp, str) else str(resp)
+    # Local/direct fallback: needs the workspace's own provider key.
+    if cfg["source"] != "custom" or not cfg["api_key"]:
+        raise RuntimeError(
+            "AI is unavailable: the Emergent key requires the emergentintegrations package (Emergent-hosted). "
+            "To run locally, add your own OpenAI/Anthropic/Gemini API key in Settings → Integrations → AI Language Model."
+        )
+    return await _direct_llm_generate(cfg, system_message, prompt, prefix)
 
 
 async def generate_script(product: str, audience: str, objective: str, tone: str, session_id: str,
@@ -217,6 +260,27 @@ async def agent_reply(script: str, history: list, prospect_message: str, session
     return await llm_generate(session_id, system, prompt, org)
 
 
+async def generate_opening_line(org: dict, script_content: str, personality: str, script_type: str,
+                                company_overview: str, agent_name: str, session_id: str) -> str:
+    """Generate a natural opening line for a cold call from the persona/blueprint (not a hardcoded string).
+    Used when the script is personality-driven or has no usable scripted first line."""
+    persona_block = personality or script_content or "A friendly, professional outbound sales agent."
+    system = (
+        "You are an AI outbound sales agent about to open a live UK cold call. "
+        f"Your name is {agent_name}. Speak the FIRST line only — a short, natural, warm opener that introduces "
+        "yourself/your company and politely asks for a moment. Never read stage labels, titles or placeholders. "
+        "Output ONLY the spoken words (no quotes, no preamble).\n\n"
+        f"YOUR PERSONA / APPROACH:\n{persona_block}"
+        + (_company_block(company_overview) if company_overview else "")
+    )
+    try:
+        reply = await llm_generate(session_id, system, "Give me the opening line now.", org)
+        return (reply if isinstance(reply, str) else str(reply)).strip().strip('"')
+    except Exception as e:
+        logger.error(f"opening-line generation failed: {e}")
+        return ""
+
+
 async def analyze_transcript(transcript: str, session_id: str, org: dict = None) -> dict:
     import json
     system = (
@@ -273,6 +337,23 @@ def validate_elevenlabs_key(api_key: str) -> dict:
         return {"valid": False, "message": f"Validation failed: {msg[:160]}"}
 
 
+def _dynamic_voice_params(text: str) -> tuple:
+    """Heuristic dynamic delivery: adapt (stability, style, speed) to the utterance context.
+    Questions/excitement → more expressive & a touch faster; long/factual → steadier & calmer."""
+    t = (text or "").strip()
+    lower = t.lower()
+    excited = ("!" in t) or any(w in lower for w in ("great", "amazing", "fantastic", "love", "excited", "brilliant", "perfect"))
+    question = t.endswith("?") or lower.startswith(("do ", "would ", "are ", "can ", "how ", "what ", "when ", "is ", "could "))
+    longish = len(t) > 220
+    if excited:
+        return (0.30, 0.55, 1.08)
+    if question:
+        return (0.40, 0.40, 1.05)
+    if longish:
+        return (0.65, 0.15, 0.97)
+    return (0.50, 0.30, 1.0)
+
+
 async def generate_tts(org: dict, voice_id: str, text: str) -> dict:
     """Generate speech using the selected provider. Logs selection; never falls back silently
     when a valid ElevenLabs key exists. Returns {provider, voice, audio_url, reason, error}."""
@@ -293,19 +374,27 @@ async def generate_tts(org: dict, voice_id: str, text: str) -> dict:
     try:
         from elevenlabs import ElevenLabs, VoiceSettings
         client = ElevenLabs(api_key=key)
+        vc = (org or {}).get("voice_characteristics", {}).get(voice_id, {})
+
+        # Base values: per-voice override → org integration setting → default.
+        stability = vc.get("stability", integ.get("elevenlabs_stability", 0.5))
+        style = vc.get("style", integ.get("elevenlabs_style", 0.0))
+        speed = vc.get("speed", 1.0)
+
+        # Dynamic delivery: vary stability/style/speed by the utterance's context.
+        if vc.get("dynamic"):
+            stability, style, speed = _dynamic_voice_params(text)
+
         vs_kwargs = dict(
-            stability=float(integ.get("elevenlabs_stability", 0.5)),
+            stability=float(max(0.0, min(1.0, float(stability)))),
             similarity_boost=float(integ.get("elevenlabs_similarity", 0.75)),
-            style=float(integ.get("elevenlabs_style", 0.0)),
+            style=float(max(0.0, min(1.0, float(style)))),
             use_speaker_boost=True,
         )
-        # Per-voice speaking speed (org override). ElevenLabs supports 0.7–1.2.
-        speed = (org or {}).get("voice_characteristics", {}).get(voice_id, {}).get("speed")
-        if speed is not None:
-            try:
-                vs_kwargs["speed"] = max(0.7, min(1.2, float(speed)))
-            except (TypeError, ValueError):
-                pass
+        try:
+            vs_kwargs["speed"] = max(0.7, min(1.2, float(speed)))
+        except (TypeError, ValueError):
+            pass
         try:
             settings = VoiceSettings(**vs_kwargs)
         except TypeError:
@@ -362,9 +451,7 @@ async def generate_kb_opening(org: dict, kb_entries: list, product_context: str,
     )
     prompt = f"Knowledge base:\n{kb_text}\n\nProduct/context: {product_context}\n\nWrite the opening line:"
     try:
-        chat = _chat(session_id, system, org)
-        from emergentintegrations.llm.chat import UserMessage
-        resp = await chat.send_message(UserMessage(text=prompt))
+        resp = await llm_generate(session_id, system, prompt, org)
         opening = (resp if isinstance(resp, str) else str(resp)).strip().strip('"')
         if len(opening) > max_length:
             opening = opening[:max_length].rsplit(" ", 1)[0] + "…"
