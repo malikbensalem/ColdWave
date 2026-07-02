@@ -128,6 +128,19 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - **P2 — Packages/tiers & credits**: owner-created tiers (feature access + limits on calls/customers), per-company pricing, credit tracking that auto-stops campaigns + notifies users when AI/ElevenLabs/3CX credits run out.
 - **Refactor**: split the ~900-line `routes.py` into contacts/calls/campaigns/settings routers.
 
+## Iteration 11 (2026-07-02) — P2 + P3: AI auto-reply approval queue + per-channel blueprints
+- **Per-channel AI blueprints (P3)**: blueprints now carry a `channel` (global/call/email/whatsapp/sms). `messaging._channel_system_prompt(org, channel)` resolves a channel-specific blueprint (else global default) + the org's AI extension + channel-style instructions. Uses the workspace's own LLM config (Settings → AI provider/model), falling back to the Emergent Universal key.
+- **AI auto-reply + human approval (P2)**: inbound messages generate an AI **draft** stored in `message_approvals` (state=pending). NOTHING sends without human approval. Endpoints: `POST /messages/approvals/simulate-inbound` (test drafter), `GET /messages/approvals`, `PUT /messages/approvals/{id}` (edit draft), `POST .../approve` (sends via provider — WhatsApp live/mock; sms/email recorded as sent pending live gateway/OAuth), `POST .../reject`. Frontend: Messaging → "AI Approvals" tab with simulate form, editable draft cards, Approve/Save/Reject. Tested end-to-end (AI draft generated, edited, approved→sent mock).
+- **KEY FINDING**: 3CX Call Control API has NO SMS or WhatsApp send endpoint. WhatsApp goes via the Meta Cloud API (already integrated — this IS what "3CX WhatsApp" uses). 3CX exposes no public SMS send API; live SMS needs the customer's SMS gateway. Email live send needs Gmail/O365 OAuth setup.
+
+## Remaining phases & prerequisites (2026-07-02)
+- **P1 — Omnichannel campaign parity** (email/whatsapp/sms campaigns like calls): buildable; live send blocked per channel (WhatsApp=Meta creds, SMS=gateway, Email=OAuth).
+- **P4 — Live call controls** (listen/whisper/barge/take-over): build against 3CX Call Control `POST /callcontrol/{dn}/participants` etc.; NEEDS LIVE-PBX VERIFICATION.
+- **P5 — Packages/tiers**; **P6 — Credit tracking/auto-stop+notify**: fully buildable, no external deps.
+- **P7 — Auto-dialer loop** (pacing within UK hours, auto-stop on opt-outs): buildable.
+- **P8 — Refactor routes.py + a11y polish**.
+- **P9 — Test vs Live toggle**: messaging side done (simulate + approve→send). Call side (real test call vs live-with-listen) folds into P4.
+
 ## Backlog / Next (updated)
 - P1: Disable email send-now button while pending (avoid double-count); real Gmail/O365 OAuth + actual delivery when desired.
 - P1: Resolve known iter-3 sticky-LLM-key-on-provider-switch edge case.

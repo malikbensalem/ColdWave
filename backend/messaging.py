@@ -13,6 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from database import db
+from models import SimulateInboundRequest, ApprovalEditRequest, new_id
+from integrations import llm_generate
 
 logger = logging.getLogger("coldwave.messaging")
 
@@ -107,6 +109,37 @@ class SendMessageRequest(BaseModel):
     contact_id: Optional[str] = None
 
 
+CHANNEL_INSTRUCTIONS = {
+    "whatsapp": "You are drafting a WhatsApp reply to a prospect. Keep it short, warm and professional; no markdown.",
+    "sms": "You are drafting an SMS reply. Keep it under 300 characters, plain text, with a clear opt-out (reply STOP).",
+    "email": "You are drafting an email reply. Use a brief professional greeting and a short sign-off.",
+}
+
+
+async def _channel_system_prompt(org: dict, channel: str) -> str:
+    """Resolve the AI system prompt for a channel: channel-specific blueprint (if any),
+    else the global default blueprint, plus the org's own AI extension + channel style."""
+    bp = await db.ai_blueprints.find_one({"channel": channel}, {"_id": 0}, sort=[("created_at", -1)])
+    if not bp:
+        bp = await db.ai_blueprints.find_one({"is_default": True}, {"_id": 0})
+    base = (bp or {}).get("prompt", "")
+    org_ext = (org or {}).get("ai_system_prompt", "")
+    parts = [p for p in [base, org_ext, CHANNEL_INSTRUCTIONS.get(channel, "")] if p]
+    return "\n\n".join(parts)
+
+
+async def _generate_draft(org: dict, channel: str, inbound_text: str) -> str:
+    system = await _channel_system_prompt(org, channel)
+    prompt = (f'A prospect sent this inbound {channel} message:\n"{inbound_text}"\n\n'
+              "Write a suitable reply. Output ONLY the reply text — no preamble.")
+    try:
+        reply = await llm_generate(f"reply_{org.get('id','')}_{channel}", system, prompt, org)
+        return (reply or "").strip()
+    except Exception as e:
+        logger.error(f"AI draft generation failed: {e}")
+        return ""
+
+
 def build_messaging_router(get_current_user, record_audit):
     router = APIRouter(prefix="/api/messages", tags=["messaging"])
 
@@ -169,6 +202,91 @@ def build_messaging_router(get_current_user, record_audit):
     @router.get("/dead-letters")
     async def list_dead_letters(user: dict = Depends(get_current_user)):
         return await db.message_dead_letters.find({"org_id": user["org_id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+    # ---- AI auto-reply + human approval queue (P2/P3) ----
+    @router.post("/approvals/simulate-inbound")
+    async def simulate_inbound(req: SimulateInboundRequest, user: dict = Depends(get_current_user)):
+        """Test helper: record an inbound message and generate an AI draft reply awaiting human approval."""
+        org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0}) or {}
+        await db.messages.insert_one({
+            "id": f"msg_{uuid.uuid4().hex[:16]}", "org_id": user["org_id"], "channel": req.channel,
+            "from": req.sender, "contact_id": req.contact_id, "direction": "inbound", "type": "text",
+            "body": req.text, "state": "received", "created_at": now_iso(), "updated_at": now_iso()})
+        draft = await _generate_draft({**org, "id": user["org_id"]}, req.channel, req.text)
+        ap = {
+            "id": f"appr_{uuid.uuid4().hex[:16]}", "org_id": user["org_id"], "channel": req.channel,
+            "sender": req.sender, "contact_id": req.contact_id, "inbound_text": req.text,
+            "draft_text": draft, "state": "pending", "ai_generated": bool(draft),
+            "created_at": now_iso(), "updated_at": now_iso()}
+        await db.message_approvals.insert_one(dict(ap))
+        await record_audit(user["org_id"], user["email"], "approval_draft", "approval", ap["id"],
+                           after={"channel": req.channel, "from": mask_phone(req.sender)})
+        ap.pop("_id", None)
+        return ap
+
+    @router.get("/approvals")
+    async def list_approvals(user: dict = Depends(get_current_user), state: str = Query(None)):
+        q = {"org_id": user["org_id"]}
+        if state:
+            q["state"] = state
+        return await db.message_approvals.find(q, {"_id": 0}).sort("created_at", -1).to_list(300)
+
+    @router.put("/approvals/{aid}")
+    async def edit_approval(aid: str, req: ApprovalEditRequest, user: dict = Depends(get_current_user)):
+        res = await db.message_approvals.update_one(
+            {"id": aid, "org_id": user["org_id"], "state": "pending"},
+            {"$set": {"draft_text": req.draft_text, "edited": True, "updated_at": now_iso()}})
+        if res.matched_count == 0:
+            raise HTTPException(404, "Pending approval not found")
+        return await db.message_approvals.find_one({"id": aid}, {"_id": 0})
+
+    @router.post("/approvals/{aid}/reject")
+    async def reject_approval(aid: str, user: dict = Depends(get_current_user)):
+        res = await db.message_approvals.update_one(
+            {"id": aid, "org_id": user["org_id"], "state": "pending"},
+            {"$set": {"state": "rejected", "updated_at": now_iso()}})
+        if res.matched_count == 0:
+            raise HTTPException(404, "Pending approval not found")
+        await record_audit(user["org_id"], user["email"], "approval_reject", "approval", aid)
+        return {"ok": True}
+
+    @router.post("/approvals/{aid}/approve")
+    async def approve_approval(aid: str, user: dict = Depends(get_current_user)):
+        """Human approves the AI draft — only now is the reply actually sent."""
+        ap = await db.message_approvals.find_one({"id": aid, "org_id": user["org_id"]}, {"_id": 0})
+        if not ap:
+            raise HTTPException(404, "Approval not found")
+        if ap["state"] != "pending":
+            raise HTTPException(400, f"Approval already {ap['state']}.")
+        if not (ap.get("draft_text") or "").strip():
+            raise HTTPException(400, "Draft is empty — edit it before approving.")
+        dnc = await db.dnc_list.find_one({"org_id": user["org_id"], "phone": ap["sender"]})
+        if dnc:
+            raise HTTPException(403, "Recipient is on the Do-Not-Call list.")
+
+        state, provider_name, is_mock, err = "sent", "", True, None
+        if ap["channel"] == "whatsapp":
+            org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+            provider, is_mock = get_whatsapp_provider(org)
+            provider_name = provider.name
+            try:
+                await provider.send_text(ap["sender"], ap["draft_text"])
+            except Exception as e:
+                state, err = "failed", str(e)
+        # sms / email: channel send is pluggable — recorded as sent (mock) until a live gateway/OAuth is wired.
+        await db.messages.insert_one({
+            "id": f"msg_{uuid.uuid4().hex[:16]}", "org_id": user["org_id"], "channel": ap["channel"],
+            "to": ap["sender"], "contact_id": ap.get("contact_id"), "direction": "outbound", "type": "text",
+            "body": ap["draft_text"], "state": "delivered" if state == "sent" else state,
+            "provider": provider_name or ap["channel"], "mock": is_mock, "approved_by": user["email"],
+            "created_at": now_iso(), "updated_at": now_iso()})
+        await db.message_approvals.update_one({"id": aid}, {"$set": {
+            "state": state, "approved_by": user["email"], "error": err, "updated_at": now_iso()}})
+        await record_audit(user["org_id"], user["email"], "approval_approve", "approval", aid,
+                           after={"channel": ap["channel"], "state": state})
+        if state == "failed":
+            raise HTTPException(502, f"Approved but send failed: {err}")
+        return {"ok": True, "state": state, "mock": is_mock}
 
     return router
 

@@ -71,7 +71,7 @@ def build_admin_router(get_current_user, require_owner, record_audit):
 
     @router.post("/blueprints")
     async def create_blueprint(req: BlueprintCreate, user: dict = Depends(require_owner)):
-        doc = {"id": new_id("bp"), "name": req.name, "prompt": req.prompt,
+        doc = {"id": new_id("bp"), "name": req.name, "prompt": req.prompt, "channel": req.channel or "global",
                "is_default": False, "created_at": now_utc().isoformat()}
         await db.ai_blueprints.insert_one(dict(doc))
         if req.is_default:

@@ -58,12 +58,14 @@ class BlueprintCreate(BaseModel):
     name: str
     prompt: str = ""
     is_default: bool = False
+    channel: str = "global"  # global | call | email | whatsapp | sms
 
 
 class BlueprintUpdate(BaseModel):
     name: Optional[str] = None
     prompt: Optional[str] = None
     is_default: Optional[bool] = None
+    channel: Optional[str] = None
 
 
 class AssignBlueprintRequest(BaseModel):
@@ -236,6 +238,18 @@ class LLMTestRequest(BaseModel):
 
 class KBToggleRequest(BaseModel):
     active: bool
+
+
+# ---------- Omnichannel AI auto-reply approval ----------
+class SimulateInboundRequest(BaseModel):
+    sender: str
+    text: str
+    contact_id: Optional[str] = None
+    channel: Literal["whatsapp", "sms", "email"] = "whatsapp"
+
+
+class ApprovalEditRequest(BaseModel):
+    draft_text: str
 
 
 # ---------- Voice characteristics ----------
