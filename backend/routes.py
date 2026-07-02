@@ -38,7 +38,48 @@ def clean(doc: dict) -> dict:
     return doc
 
 
-async def place_outbound_call(integ: dict, destination: str, say_text: str = None) -> dict:
+async def build_campaign_call_context(org: dict, campaign: dict) -> dict:
+    """Build the same AI context as Test Calls (script/blueprint/voice/opening) for a live call."""
+    org = await attach_system_prefix(org)
+    script_id = (campaign or {}).get("script_id")
+    voice_id = (campaign or {}).get("voice_id")
+    script = await db.scripts.find_one({"id": script_id, "org_id": org["id"]}, {"_id": 0}) if script_id else None
+    script_content = script["content"] if script else "Introduce yourself, your company, and your offer politely."
+    script_type = (script or {}).get("script_type", "line_by_line")
+    personality = (script or {}).get("personality", "")
+    active_kb = await get_kb_entries(org["id"], active_only=True)
+    company_overview = "\n\n".join([f"[{e['title']}]\n{e['content'][:1500]}" for e in active_kb])
+    voice = get_voice(voice_id) if voice_id else None
+    ov = (org or {}).get("voice_characteristics", {}).get(voice_id, {}) if voice_id else {}
+    vname = ov.get("name") or (voice["name"] if voice else "your assistant")
+    vpersona = ov.get("persona") or (voice.get("persona", "") if voice else "")
+    if voice:
+        company_overview = f"[YOUR IDENTITY]\nYour name is {vname}. {vpersona}\n\n{company_overview}".strip()
+
+    import re as _re
+    opening = None
+    if script and script_type == "line_by_line":
+        for line in script_content.split("\n"):
+            s = _re.sub(r"^\s*\[[^\]]*\]\s*", "", line).strip()
+            if s:
+                opening = s
+                break
+    if opening is None:
+        try:
+            gen = await generate_opening_line(org, script_content, personality, script_type, company_overview, vname, f"open_{org['id']}")
+            opening = gen or None
+        except Exception:
+            opening = None
+    if opening is None:
+        opening = f"Hi, this is {vname}. Do you have a quick moment?"
+
+    return {"script_id": script_id, "voice_id": voice_id, "voice_name": voice["name"] if voice else None,
+            "script_content": script_content, "script_type": script_type, "personality": personality,
+            "company_overview": company_overview, "opening": opening}
+
+
+async def place_outbound_call(integ: dict, destination: str, say_text: str = None,
+                              voice_url: str = None, status_url: str = None) -> dict:
     """Route an outbound call to the tenant's selected provider (3CX or Twilio).
     Returns {result, provider, extension}. Raises HTTPException with a clear message."""
     provider = (integ.get("telephony_provider") or "3cx").lower()
@@ -46,7 +87,7 @@ async def place_outbound_call(integ: dict, destination: str, say_text: str = Non
         if not integ.get("twilio_enabled"):
             raise HTTPException(400, "Twilio is selected but not enabled. Enable Twilio in Settings → Integrations.")
         try:
-            result = await telephony_twilio_call(integ, destination, say_text)
+            result = await telephony_twilio_call(integ, destination, say_text, voice_url=voice_url, status_url=status_url)
         except (ValueError, RuntimeError) as e:
             raise HTTPException(400, str(e))
         except Exception as e:
@@ -62,6 +103,12 @@ async def place_outbound_call(integ: dict, destination: str, say_text: str = Non
     except Exception as e:
         raise HTTPException(502, f"Could not place call via 3CX: {str(e)[:160]}")
     return {"result": result, "provider": "3cx", "extension": integ.get("tcx_extension", "")}
+
+
+def _twilio_webhooks(call_id: str) -> tuple:
+    from twilio_voice import public_base_url
+    base = public_base_url()
+    return (f"{base}/api/telephony/twilio/voice/{call_id}", f"{base}/api/telephony/twilio/status/{call_id}")
 
 
 async def attach_system_prefix(org: dict, channel: str = "call") -> dict:
@@ -427,28 +474,31 @@ async def campaign_dial_next(campaign_id: str, user: dict = Depends(require_perm
     if not contact or not contact.get("phone"):
         raise HTTPException(400, "Next contact has no phone number.")
 
-    say_text = None
-    if camp.get("script_id"):
-        script = await db.scripts.find_one({"id": camp["script_id"], "org_id": user["org_id"]}, {"_id": 0})
-        if script:
-            import re as _re
-            for line in (script.get("content") or "").split("\n"):
-                s = _re.sub(r"^\s*\[[^\]]*\]\s*", "", line).strip()
-                if s:
-                    say_text = s
-                    break
-
-    call = await place_outbound_call(integ, contact["phone"], say_text)
-    result = call["result"]
-
+    ctx = await build_campaign_call_context(org, camp)
+    provider = (integ.get("telephony_provider") or "3cx").lower()
+    call_id = new_id("call")
     call_doc = {
-        "id": new_id("call"), "org_id": user["org_id"], "type": "campaign", "campaign_id": campaign_id,
+        "id": call_id, "org_id": user["org_id"], "type": "campaign", "campaign_id": campaign_id,
         "contact_id": contact["id"], "contact_name": contact.get("name", ""),
-        "destination": contact["phone"], "extension": call["extension"],
-        "provider": call["provider"], "callid": result.get("callid"), "status": result.get("status", "Initiated"),
+        "destination": contact["phone"], "is_test": False,
+        "voice_id": ctx["voice_id"], "voice_name": ctx["voice_name"], "script_id": ctx["script_id"],
+        "script_content": ctx["script_content"], "script_type": ctx["script_type"],
+        "personality": ctx["personality"], "company_overview": ctx["company_overview"],
+        "opening": ctx["opening"], "transcript": [{"role": "agent", "content": ctx["opening"], "ts": now_utc().isoformat()}],
+        "provider": provider, "status": "initiating",
         "agent_id": user["id"], "agent_email": user["email"], "created_at": now_utc().isoformat(),
     }
     await db.calls.insert_one(dict(call_doc))
+
+    voice_url, status_url = (_twilio_webhooks(call_id) if provider == "twilio" else (None, None))
+    try:
+        call = await place_outbound_call(integ, contact["phone"], say_text=ctx["opening"], voice_url=voice_url, status_url=status_url)
+    except HTTPException:
+        await db.calls.delete_one({"id": call_id})
+        raise
+    result = call["result"]
+    await db.calls.update_one({"id": call_id}, {"$set": {
+        "extension": call["extension"], "callid": result.get("callid"), "status": result.get("status", "Initiated")}})
     if contact.get("status") in (None, "new"):
         await db.contacts.update_one({"id": contact["id"], "org_id": user["org_id"]}, {"$set": {"status": "contacted"}})
     if camp.get("status") == "draft":
@@ -911,37 +961,43 @@ async def dial_contact(req: DialRequest, user: dict = Depends(require_perm("lead
     if not destination:
         raise HTTPException(400, "No phone number to dial.")
 
-    # Optional campaign selected from the CRM — logs the call against it and seeds the Twilio opening.
+    # Build the AI context (script/blueprint/voice/opening) — same pipeline as Test Calls.
     campaign = None
-    say_text = None
     if req.campaign_id:
         campaign = await db.campaigns.find_one({"id": req.campaign_id, "org_id": user["org_id"]}, {"_id": 0})
         if not campaign:
             raise HTTPException(404, "Campaign not found")
-        if campaign.get("script_id"):
-            script = await db.scripts.find_one({"id": campaign["script_id"], "org_id": user["org_id"]}, {"_id": 0})
-            if script:
-                import re as _re
-                for line in (script.get("content") or "").split("\n"):
-                    s = _re.sub(r"^\s*\[[^\]]*\]\s*", "", line).strip()
-                    if s:
-                        say_text = s
-                        break
+    ctx = await build_campaign_call_context(org, campaign)
 
-    call = await place_outbound_call(integ, destination, say_text)
-    result = call["result"]
-
+    provider = (integ.get("telephony_provider") or "3cx").lower()
+    call_id = new_id("call")
     call_doc = {
-        "id": new_id("call"), "org_id": user["org_id"], "type": "manual",
+        "id": call_id, "org_id": user["org_id"], "type": "manual",
         "contact_id": req.contact_id, "contact_name": (contact or {}).get("name", ""),
-        "campaign_id": req.campaign_id, "destination": destination, "extension": call["extension"],
-        "provider": call["provider"], "callid": result.get("callid"), "status": result.get("status", "Initiated"),
+        "campaign_id": req.campaign_id, "destination": destination, "is_test": False,
+        "voice_id": ctx["voice_id"], "voice_name": ctx["voice_name"], "script_id": ctx["script_id"],
+        "script_content": ctx["script_content"], "script_type": ctx["script_type"],
+        "personality": ctx["personality"], "company_overview": ctx["company_overview"],
+        "opening": ctx["opening"], "transcript": [{"role": "agent", "content": ctx["opening"], "ts": now_utc().isoformat()}],
+        "provider": provider, "status": "initiating",
         "agent_id": user["id"], "agent_email": user["email"], "created_at": now_utc().isoformat(),
     }
     await db.calls.insert_one(dict(call_doc))
+
+    # For Twilio, drive the call through the AI voice webhook (campaign voice + script + blueprint).
+    voice_url, status_url = (_twilio_webhooks(call_id) if provider == "twilio" else (None, None))
+    try:
+        call = await place_outbound_call(integ, destination, say_text=ctx["opening"], voice_url=voice_url, status_url=status_url)
+    except HTTPException:
+        await db.calls.delete_one({"id": call_id})
+        raise
+    result = call["result"]
+    await db.calls.update_one({"id": call_id}, {"$set": {
+        "extension": call["extension"], "callid": result.get("callid"), "status": result.get("status", "Initiated")}})
     if contact and contact.get("status") in (None, "new"):
         await db.contacts.update_one({"id": contact["id"], "org_id": user["org_id"]}, {"$set": {"status": "contacted"}})
     await audit(user["org_id"], user, "manual_call", destination, entity="contact", entity_id=req.contact_id)
+    call_doc.update({"extension": call["extension"], "callid": result.get("callid"), "status": result.get("status")})
     call_doc.pop("_id", None)
     return {"ok": True, "callid": result.get("callid"), "status": result.get("status"), "provider": call["provider"], "call": clean(call_doc)}
 

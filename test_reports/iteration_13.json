@@ -1,0 +1,22 @@
+{
+  "summary": "Verified iteration-13 Twilio AI-voice webhook fix. All 6 tests pass: /voice returns script-driven opening + speech Gather (no static 'AI assistant please hold'); /turn produces contextual on-topic replies for interest; /turn with opt-out hangs up without further Gather; /audio 404s for unknown tokens; and provider guard returns 400 mentioning Twilio (not 3CX) when Twilio selected but disabled.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_twilio_voice_webhook.py",
+    "/app/test_reports/pytest/iter13_twilio_voice.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "twilio_voice.py is clean and small (163 lines). ElevenLabs <Play> path correctly falls back to <Say> when EL key absent — as noted in the task, demo org's EL key is cleared so <Say> is expected.",
+    "_AUDIO in-memory cache is single-process only; if backend is horizontally scaled this could cause audio 404s. Consider persisting token→bytes or using object storage for production."
+  ],
+  "updated_files": ["/app/backend/tests/test_twilio_voice_webhook.py"],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "N/A"},
+  "test_credentials": "admin@coldwave.ai / Admin123!",
+  "seed_data_creation": "Inserted call doc id='qa_wh_call' into db.calls (script/blueprint/voice fields for BrightSolar solar scenario) and deleted it in the teardown fixture. Verified post-run: qa_wh_call absent; telephony_provider restored to '3cx'; twilio_enabled=False.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Twilio AI-voice webhook regression tests live at /app/backend/tests/test_twilio_voice_webhook.py. They exercise /api/telephony/twilio/{voice,turn,audio}/... directly via Mongo-seeded call doc, so no real Twilio call is placed. Safe to re-run.",
+  "rca of the issue": "N/A — this run only verified the previously-applied fix. The fix routes Twilio's Url webhook to /api/telephony/twilio/voice/{call_id}, which reads the pre-inserted call doc (voice_id + opening + script_content + company_overview) and drives the same agent_reply pipeline as Test Calls, replacing the old static Polly greeting."
+}

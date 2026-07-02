@@ -152,10 +152,11 @@ async def make_call(integ: dict, destination: str) -> dict:
     )
 
 
-async def twilio_make_call(integ: dict, destination: str, say_text: str = None) -> dict:
+async def twilio_make_call(integ: dict, destination: str, say_text: str = None,
+                           voice_url: str = None, status_url: str = None) -> dict:
     """Originate a real outbound call via Twilio Programmable Voice.
-    Without a media-streaming setup the call speaks the opening line then pauses
-    (full AI conversation over Twilio requires Media Streams — a later step)."""
+    If `voice_url` is given, Twilio fetches TwiML from that webhook (runs the turn-based AI
+    conversation in the campaign voice). Otherwise it speaks `say_text` via inline TwiML."""
     from xml.sax.saxutils import escape
     sid = (integ.get("twilio_account_sid") or "").strip()
     token = (integ.get("twilio_auth_token") or "").strip()
@@ -165,11 +166,20 @@ async def twilio_make_call(integ: dict, destination: str, say_text: str = None) 
     if not destination:
         raise ValueError("No destination number provided.")
     dest = destination.strip().replace(" ", "")
-    say = say_text or "Hello, this is an automated call from your A I assistant. Please hold a moment."
-    twiml = f'<Response><Say voice="Polly.Amy">{escape(say)}</Say><Pause length="3"/></Response>'
+    data = {"To": dest, "From": from_num}
+    if voice_url:
+        data["Url"] = voice_url
+        data["Method"] = "POST"
+        if status_url:
+            data["StatusCallback"] = status_url
+            data["StatusCallbackEvent"] = "completed"
+            data["StatusCallbackMethod"] = "POST"
+    else:
+        say = say_text or "Hello, this is an automated call from your A I assistant. Please hold a moment."
+        data["Twiml"] = f'<Response><Say voice="Polly.Amy">{escape(say)}</Say><Pause length="3"/></Response>'
     url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Calls.json"
     async with httpx.AsyncClient(timeout=25.0) as client:
-        r = await client.post(url, data={"To": dest, "From": from_num, "Twiml": twiml}, auth=(sid, token))
+        r = await client.post(url, data=data, auth=(sid, token))
     if r.status_code in (200, 201):
         d = r.json()
         return {"callid": d.get("sid"), "status": d.get("status", "queued")}
