@@ -178,6 +178,16 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - **#7** Email provider connection (Gmail + O365 OAuth) UI under Settings.
 - **#8** SMS section (WhatsApp-like) + New SMS campaign button (live SMS via Twilio).
 
+## Iteration 15 (2026-07-02) — Live Twilio calls run the AI agent (script + blueprint + ElevenLabs voice)
+- **New `twilio_voice.py`** — Twilio Programmable Voice webhooks that run a **turn-based AI cold call** using the campaign's script/blueprint + ElevenLabs voice, the SAME generation pipeline as Test Calls:
+  - `POST /api/telephony/twilio/voice/{call_id}` → `<Play>` (ElevenLabs) or `<Say>` fallback the script-driven opening + `<Gather input="speech">`.
+  - `POST /api/telephony/twilio/turn/{call_id}` → `agent_reply()` on the prospect's speech → next turn; detects opt-out/close → `<Hangup/>`; handles silence.
+  - `GET /api/telephony/twilio/audio/{token}.mp3` serves ElevenLabs audio to Twilio; `POST .../status/{call_id}` analyses the transcript on completion (summary/sentiment/rating → CRM).
+- `routes.build_campaign_call_context()` builds script_content/script_type/personality/company_overview/voice + opening (voice identity injected) and is stored on the call; `dial_contact` & `campaign_dial_next` pre-insert the call and drive Twilio via the voice webhook URL. Replaces the old static "this is an automated call… please hold" Polly greeting.
+- Verified: iteration_13.json — backend 6/6 PASS (regression tests at `/app/backend/tests/test_twilio_voice_webhook.py`). Uses `<Say>` fallback only because the demo EL key was cleared; `<Play>` (campaign ElevenLabs voice) activates once an ElevenLabs key is set + the campaign has a voice.
+- KNOWN (prod note): `_AUDIO` is an in-process cache — fine for a single worker; move to object storage if horizontally scaled.
+- ⚠️ Re-enter in Settings → Integrations: **ElevenLabs API key** (for the campaign voice on calls) and the **3CX API key** (both cleared during earlier testing).
+
 ## Backlog / Next (updated)
 - P1: Disable email send-now button while pending (avoid double-count); real Gmail/O365 OAuth + actual delivery when desired.
 - P1: Resolve known iter-3 sticky-LLM-key-on-provider-switch edge case.
