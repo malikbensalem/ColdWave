@@ -411,7 +411,7 @@ function VoicesTab() {
   const [voices, setVoices] = useState([]);
   const [enabled, setEnabled] = useState(false);
   const [playing, setPlaying] = useState(null);
-  const [sample, setSample] = useState("Hello, this is Alex calling from ColdWave. Have I caught you at a good time?");
+  const [sample, setSample] = useState("Hello, we are calling from ColdWave");
   const [editVoice, setEditVoice] = useState(null);
   const [editForm, setEditForm] = useState({ name: "", persona: "", speed: 1.0, stability: 0.5, style: 0.0, dynamic: false });
 
