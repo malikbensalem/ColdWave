@@ -203,10 +203,18 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 ## Still TODO (user roadmap from message 507)
 - **T3 (P1)** Synced transcript playback + real call recordings.
 - **T4 (P1)** Auto-dial mode (continuously dial the campaign queue).
-- **T5 (P1)** Fully editable campaigns after creation.
-- **T6 (P1)** Campaign lead add/remove + more filters.
+- ~~T5 Fully editable campaigns~~ ✅ DONE (iteration 17)
+- ~~T6 Campaign lead add/remove~~ ✅ DONE (iteration 17); more filters still open (P2).
 - **T7 (P2)** Email provider (Gmail/O365 OAuth) + SMS section/campaigns in Settings.
-- **T8 (P2)** Provider balances (ElevenLabs/Twilio credits) in Settings.
-- **T9 (P2)** CRM callback labels (AI vs Human).
-- **T10 (P2)** Remove AI System Prompt section from Org Settings.
-- **Refactor**: split `routes.py` (~1140 lines) into routers.
+- ~~T8 Provider balances in Settings~~ ✅ DONE (iteration 17).
+- ~~T9 CRM callback labels (AI vs Human)~~ ✅ DONE (iteration 17).
+- ~~T10 Remove AI System Prompt from Org Settings~~ ✅ DONE (user removed; confirmed absent).
+- **Refactor**: split `routes.py` and the large page components (Campaigns.jsx, Leads.jsx) into modules.
+
+## Iteration 17 (2026-07-13) — Editable campaigns, campaign lead add/remove, integration balances, CRM callback labels
+- **T5 Editable campaigns**: campaign cards now have an **Edit** (pencil) button → dialog to edit name/description/audience/script/voice/schedule, saved via existing `PUT /api/campaigns/{id}`.
+- **T6 Add/remove leads**: edit dialog supports switching audience to **Specific clients** with an add/remove lead picker. New backend `POST /api/campaigns/{id}/leads {contact_ids, action: add|remove}` (sets audience='specific', updates contact_ids).
+- **T8 Credits & balances**: new `GET /api/settings/integrations/balances` fetches live remaining credit — **ElevenLabs** characters (v1/user/subscription), **Twilio** account balance (Balance.json); 3CX & LLM shown as informational (no public balance API). Settings → Integrations shows a **Credits & balances** section with a "Check balances" button.
+- **T9 CRM callback labels**: `ContactUpdate` gained `callback_at` + `callback_type` (ai|human). Leads table has a new **Callback** column (date + AI/Human badge); the lead detail sheet has a **Schedule callback** section (datetime + AI/Human toggle + Save).
+- **T10**: confirmed the **AI System Prompt** section is gone from Organisation Settings (user removed it; verified absent).
+- Verified: iteration_15.json — **frontend E2E 100%**, all backend endpoints curl-verified. No bugs.
