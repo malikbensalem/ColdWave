@@ -211,6 +211,12 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - ~~T10 Remove AI System Prompt from Org Settings~~ ✅ DONE (user removed; confirmed absent).
 - **Refactor**: split `routes.py` and the large page components (Campaigns.jsx, Leads.jsx) into modules.
 
+## Iteration 19 (2026-07-13) — Live-call latency round 2: enforce streaming + barge-in gather + robust audio
+- **Confirmed the streaming WebSocket is reachable through the ingress** (external `wss://…/api/telephony/twilio/relay/ws/{id}` handshake upgrades OK) — so ConversationRelay (sub-1s) is viable here. Calls stuck at ~10s were running the turn-based `<Gather>` fallback.
+- **`<Gather>` fallback heavily optimised** (`twilio_voice.py`): (1) the AI prompt is now nested INSIDE `<Gather>` → the prospect can **barge in / talk over the AI** (natural interruption); (2) TTS uses the fast `eleven_flash_v2_5` model; (3) synthesised audio is stored in **MongoDB (`tts_audio`) instead of in-process memory** and served from there — fixes multi-second Twilio retry delays / 404s on horizontally-scaled deploys (a prime suspect for the 10s); (4) `speechModel="experimental_conversations"` + `actionOnEmptyResult` for snappier, conversational turn-taking; audio is freed on call completion.
+- **Sub-1s recipe (surfaced in Settings)**: use **Real-time streaming** voice mode (default; this is the webhook Twilio connects to for streaming) + a fast model. Measured stream time-to-first-token: GPT-4o ≈0.5s, GPT-4.1-mini ≈0.4s (sub-1s); Claude ≈1.2s.
+- Verified: WSS reachable externally; both webhooks render correct TwiML; Mongo audio serve returns 200/audio-mpeg; streaming WS still emits incremental chunks. Live phone-audio latency to be confirmed on the user's deployed call.
+
 ## Iteration 18 (2026-07-13) — Live-call latency fix: token-streamed AI voice (sub-1s)
 - **Problem**: live calls took ~10s to respond (text test calls were <1s). Root cause: the voice path `await`ed the FULL LLM reply (~1.7s) before any audio, then synthesised the whole reply with the slow `eleven_multilingual_v2` model, plus `<Gather>` endpointing — compounding to ~10s.
 - **Fix (core)**: ConversationRelay now **streams LLM tokens** to Twilio as they arrive (`integrations.stream_agent_reply` via `LlmChat.stream_message` → `TextDelta`). The AI starts speaking on the **first token** instead of after the full reply. Verified: WS emits multiple incremental `text` chunks + final `last:true`; first chunk ~1.2s (Claude) and continuous thereafter.
