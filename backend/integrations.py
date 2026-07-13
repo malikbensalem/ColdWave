@@ -360,6 +360,7 @@ async def generate_tts(org: dict, voice_id: str, text: str) -> dict:
     selection = select_tts_provider(org)
     voice = get_voice(voice_id)
     integ = (org or {}).get("integrations", {})
+    # key = "sk_9a35cfaf46f3cdca52ab0c9d98f6e9375ed54ccaf24a5bca"
     key = integ.get("elevenlabs_api_key") or os.environ.get("ELEVENLABS_API_KEY", "")
 
     if selection["provider"] != "elevenlabs":
@@ -385,37 +386,47 @@ async def generate_tts(org: dict, voice_id: str, text: str) -> dict:
         if vc.get("dynamic"):
             stability, style, speed = _dynamic_voice_params(text)
 
-        vs_kwargs = dict(
-            stability=float(max(0.0, min(1.0, float(stability)))),
-            similarity_boost=float(integ.get("elevenlabs_similarity", 0.75)),
-            style=float(max(0.0, min(1.0, float(style)))),
-            use_speaker_boost=True,
-        )
-        try:
-            vs_kwargs["speed"] = max(0.7, min(1.2, float(speed)))
-        except (TypeError, ValueError):
-            pass
-        try:
-            settings = VoiceSettings(**vs_kwargs)
-        except TypeError:
-            vs_kwargs.pop("speed", None)  # older SDK without speed support
-            settings = VoiceSettings(**vs_kwargs)
+        # vs_kwargs = dict(
+        #     stability=float(max(0.0, min(1.0, float(stability)))),
+        #     similarity_boost=float(integ.get("elevenlabs_similarity", 0.75)),
+        #     style=float(max(0.0, min(1.0, float(style)))),
+        #     use_speaker_boost=True,
+        # )
+
+        # try:
+        #     vs_kwargs["speed"] = max(0.7, min(1.2, float(speed)))
+            
+        # except (TypeError, ValueError):
+        #     pass
+        # try:
+        #     settings = VoiceSettings(**vs_kwargs)
+
+        # except TypeError:
+        #     vs_kwargs.pop("speed", None)  # older SDK without speed support
+        #     settings = VoiceSettings(**vs_kwargs)
+
         model_id = integ.get("elevenlabs_model", "eleven_multilingual_v2")
+        # audio = client.text_to_speech.convert(
+        #     text=text[:600], voice_id=voice["elevenlabs_voice_id"],
+        #     model_id=model_id, voice_settings=settings)
+
         audio = client.text_to_speech.convert(
             text=text[:600], voice_id=voice["elevenlabs_voice_id"],
-            model_id=model_id, voice_settings=settings)
+            model_id=model_id)
         data = b""
+
         for chunk in audio:
             data += chunk
         b64 = base64.b64encode(data).decode()
+
         logger.info(f"TTS selection -> elevenlabs OK voice={voice['name']} model={model_id} bytes={len(data)}")
         return {"provider": "elevenlabs", "voice": voice,
                 "audio_url": f"data:audio/mpeg;base64,{b64}", "reason": "valid_config", "error": None}
     except Exception as e:
         # IMPORTANT: do NOT silently fall back when a key was configured. Surface the error.
         logger.error(f"TTS elevenlabs ERROR (configured key present) voice={voice_id}: {e}")
-        return {"provider": "elevenlabs_error", "voice": voice, "audio_url": None,
-                "reason": "elevenlabs_call_failed", "error": str(e)[:200]}
+        return {"provider": "elevenlabs_error1", "voice": voice, "audio_url": None,
+                "reason": "elevenlabs_call_failed", "error": str(e)}
 
 
 # ---------------- Knowledge-base guided opening line + guardrails ----------------
