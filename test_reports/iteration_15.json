@@ -1,0 +1,33 @@
+{
+  "summary": "E2E frontend test of T5/T6/T8/T9/T10 + regression on Campaigns and Live Calls. All targeted features working. Demo campaign 'Q3 UK SaaS Outreach' reset to audience='all' with original name after tests.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "T5_edit_campaign": "PASS - opened edit dialog on Q3 UK SaaS Outreach, changed name, card reflected update after reload",
+    "T6_add_leads": "PASS - switched audience to 'specific', selected a lead checkbox, saved, re-opened and confirmed audience='specific' with checkbox still checked",
+    "T8_credits_balances": "PASS - Settings > Integrations shows 'Credits & balances' section; refresh-balances-button loads balances-grid with 3CX card ('3CX has no credit/balance API — usage is billed on your PBX plan.')",
+    "T9_callback_AI": "PASS - callback-scheduler visible in lead sheet; setting datetime + AI + save renders Callback column with 'AI' badge (data-testid=callback-type-badge)",
+    "T9_callback_HUMAN": "PASS - toggling to Human + save renders 'HUMAN' badge in row",
+    "T10_no_system_prompt": "PASS - Organisation tab body text contains no 'System Prompt' string",
+    "REG_new_campaign_dialog": "PASS - create-campaign-button opens dialog with campaign-name field",
+    "REG_live_calls_page": "PASS - /live-calls renders sidebar + 'Live Calls' header + call cards + Take over/End buttons"
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Leads.jsx & Campaigns.jsx are large single-file components (~400-620 lines). Consider splitting CampaignsTab/ScriptsTab/VoicesTab and Lead detail sheet into separate files for maintainability.",
+    "In Leads.jsx saveCallback: 'status' is force-set to 'callback' even if lead is already positive/contacted — may inadvertently overwrite meaningful status. Consider allowing status preservation or making it explicit."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only run)", "frontend": "100%"},
+  "test_credentials": "admin@coldwave.ai / Admin123!",
+  "seed_data_creation": "None. Campaign name/audience reset to original after test. One lead (Priya Sharma) was left with a callback_at=2026-06-01T10:00 and callback_type='human' — this is expected demo residue and does not break the queue.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login flow: fill email + password inputs, click role=button name='Sign in' (NOT type=submit). Campaign edit sheet & lead detail sheet can be tall; use viewport height >= 2000 OR scroll_into_view_if_needed() before clicking callback-type-ai/human buttons.",
+  "rca of the issue": "N/A - no bugs found in this iteration."
+}

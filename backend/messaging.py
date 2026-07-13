@@ -128,8 +128,7 @@ async def _channel_system_prompt(org: dict, channel: str) -> str:
     if not bp:
         bp = await db.ai_blueprints.find_one({"is_default": True}, {"_id": 0})
     base = (bp or {}).get("prompt", "")
-    org_ext = (org or {}).get("ai_system_prompt", "")
-    parts = [p for p in [base, org_ext, CHANNEL_INSTRUCTIONS.get(channel, "")] if p]
+    parts = [p for p in [base, CHANNEL_INSTRUCTIONS.get(channel, "")] if p]
     return "\n\n".join(parts)
 
 

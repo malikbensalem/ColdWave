@@ -19,6 +19,19 @@ function RatingBadge({ value }) {
 
 function fmtDate(d) { return d ? new Date(d).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—"; }
 
+function CallbackCell({ at, type }) {
+  if (!at) return <span className="text-xs text-muted-foreground">—</span>;
+  const isAi = type === "ai";
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-xs whitespace-nowrap">{fmtDate(at)}</span>
+      <span data-testid="callback-type-badge" className={`inline-flex w-fit items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${isAi ? "bg-primary/15 text-primary" : "bg-amber-100 text-amber-700"}`}>
+        {isAi ? "AI" : "Human"}
+      </span>
+    </div>
+  );
+}
+
 function hasTranscript(call) {
   return Array.isArray(call?.transcript) && call.transcript.length > 0;
 }
@@ -35,6 +48,8 @@ export default function Leads() {
   const [campaigns, setCampaigns] = useState([]);
   const [callCampaignId, setCallCampaignId] = useState("");
   const [form, setForm] = useState({ name: "", phone: "", email: "", company: "", notes: "", consent: false });
+  const [cbDate, setCbDate] = useState("");
+  const [cbType, setCbType] = useState("human");
 
   const load = useCallback(async () => {
     const params = {};
@@ -46,6 +61,13 @@ export default function Leads() {
   }, [filter, search]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (detail) {
+      setCbDate(detail.callback_at ? String(detail.callback_at).slice(0, 16) : "");
+      setCbType(detail.callback_type || "human");
+    }
+  }, [detail?.id]);
 
   const create = async (e) => {
     e.preventDefault();
@@ -68,6 +90,14 @@ export default function Leads() {
     toast.success("Status updated");
     load();
     if (detail?.id === id) openDetail(id);
+  };
+
+  const saveCallback = async () => {
+    if (!cbDate) { toast.error("Pick a callback date & time."); return; }
+    await api.put(`/contacts/${detail.id}`, { status: "callback", callback_at: cbDate, callback_type: cbType });
+    toast.success(`Callback scheduled (${cbType === "ai" ? "AI" : "Human"})`);
+    load();
+    openDetail(detail.id);
   };
 
   const addDnc = async (phone) => {
@@ -164,6 +194,7 @@ export default function Leads() {
               <th className="py-2.5 px-4 font-semibold">Last summary</th>
               <th className="py-2.5 px-4 font-semibold">Campaign</th>
               <th className="py-2.5 px-4 font-semibold">Last call</th>
+              <th className="py-2.5 px-4 font-semibold">Callback</th>
               <th className="py-2.5 px-4 font-semibold text-right">Actions</th>
             </tr>
           </thead>
@@ -188,6 +219,7 @@ export default function Leads() {
                 </td>
                 <td className="py-2.5 px-4 text-muted-foreground text-xs">{c.last_call_campaign || "—"}</td>
                 <td className="py-2.5 px-4 text-muted-foreground text-xs whitespace-nowrap">{c.last_call_date ? fmtDate(c.last_call_date) : "—"}</td>
+                <td className="py-2.5 px-4"><CallbackCell at={c.callback_at} type={c.callback_type} /></td>
                 <td className="py-2.5 px-4 text-right">
                   <button data-testid={`call-lead-${c.id}`} disabled={!callable || dialing === c.id} onClick={(e) => openCall(c, e)}
                     title={callable ? "Call via 3CX / Twilio" : "Contact opted out / DNC"}
@@ -223,6 +255,26 @@ export default function Leads() {
                     {["new", "contacted", "positive", "callback"].map((s) => (
                       <button key={s} data-testid={`set-status-${s}`} onClick={() => setStatus(detail.id, s)} className="px-3 h-8 rounded-sm text-xs font-semibold capitalize border border-border hover:bg-accent">{s}</button>
                     ))}
+                  </div>
+                </div>
+
+                <div data-testid="callback-scheduler">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2 font-semibold">Schedule callback</div>
+                  {detail.callback_at && (
+                    <div className="mb-2 text-xs text-muted-foreground">Current: <span className="text-foreground">{fmtDate(detail.callback_at)}</span>
+                      <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase ${detail.callback_type === "ai" ? "bg-primary/15 text-primary" : "bg-amber-100 text-amber-700"}`}>{detail.callback_type === "ai" ? "AI" : "Human"}</span>
+                    </div>
+                  )}
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input type="datetime-local" data-testid="callback-date-input" value={cbDate} onChange={(e) => setCbDate(e.target.value)}
+                      className="h-9 flex-1 rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                    <div className="inline-flex rounded-sm border border-border overflow-hidden">
+                      {[["human", "Human"], ["ai", "AI"]].map(([v, label]) => (
+                        <button key={v} type="button" data-testid={`callback-type-${v}`} onClick={() => setCbType(v)}
+                          className={`h-9 px-3 text-xs font-semibold ${cbType === v ? "bg-primary text-primary-foreground" : "bg-card hover:bg-accent"}`}>{label}</button>
+                      ))}
+                    </div>
+                    <button data-testid="save-callback-button" onClick={saveCallback} className="h-9 px-3 rounded-sm bg-primary text-primary-foreground text-xs font-semibold hover:opacity-90">Save callback</button>
                   </div>
                 </div>
 

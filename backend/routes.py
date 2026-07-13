@@ -9,7 +9,7 @@ from models import (
     CampaignCreate, CampaignUpdate, VoicePreviewRequest, TestCallStartRequest,
     TestCallTurnRequest, DNCAddRequest, ErasureRequest, OrgUpdateRequest,
     IntegrationSettings, InviteUserRequest, UpdateUserRequest, ElevenLabsTestRequest,
-    LLMTestRequest, VoiceCharacteristicsUpdate, BanRequest, DialRequest, TcxTestRequest, TwilioTestRequest, TakeoverRequest, now_utc, new_id,
+    LLMTestRequest, VoiceCharacteristicsUpdate, BanRequest, DialRequest, TcxTestRequest, TwilioTestRequest, TakeoverRequest, CampaignLeadsRequest, now_utc, new_id,
 )
 from telephony import (
     test_connection as telephony_test, make_call as telephony_make_call,
@@ -130,8 +130,7 @@ async def attach_system_prefix(org: dict, channel: str = "call") -> dict:
     if bp_id:
         bp = await db.ai_blueprints.find_one({"id": bp_id}, {"_id": 0})
         bp_prompt = (bp or {}).get("prompt", "")
-    org_p = org.get("ai_system_prompt", "")
-    parts = [p for p in [bp_prompt, org_p] if p]
+    parts = [p for p in [bp_prompt] if p]
     return {**org, "_system_prefix": "\n\n".join(parts)} if parts else org
 
 
@@ -401,6 +400,26 @@ async def update_campaign(campaign_id: str, req: CampaignUpdate, user: dict = De
 async def delete_campaign(campaign_id: str, user: dict = Depends(get_current_user)):
     await db.campaigns.delete_one({"id": campaign_id, "org_id": user["org_id"]})
     return {"ok": True}
+
+
+@router.post("/campaigns/{campaign_id}/leads")
+async def manage_campaign_leads(campaign_id: str, req: CampaignLeadsRequest, user: dict = Depends(get_current_user)):
+    """Add or remove specific leads on a campaign (converts audience to 'specific')."""
+    camp = await db.campaigns.find_one({"id": campaign_id, "org_id": user["org_id"]}, {"_id": 0})
+    if not camp:
+        raise HTTPException(404, "Campaign not found")
+    ids = list(dict.fromkeys(camp.get("contact_ids") or []))
+    if req.action == "add":
+        for cid in req.contact_ids:
+            if cid not in ids:
+                ids.append(cid)
+    else:
+        ids = [c for c in ids if c not in set(req.contact_ids)]
+    await db.campaigns.update_one({"id": campaign_id, "org_id": user["org_id"]},
+                                  {"$set": {"contact_ids": ids, "audience": "specific"}})
+    await audit(user["org_id"], user, req.action, entity="campaign", entity_id=campaign_id,
+                detail=f"{req.action} {len(req.contact_ids)} lead(s)")
+    return await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
 
 
 @router.get("/campaigns/{campaign_id}/analytics")
@@ -1015,6 +1034,68 @@ async def test_twilio(req: TwilioTestRequest, user: dict = Depends(require_admin
     if r.status_code in (401, 403):
         return {"valid": False, "message": "Invalid Account SID or Auth Token."}
     return {"valid": False, "message": f"Twilio returned HTTP {r.status_code}."}
+
+
+@router.get("/settings/integrations/balances")
+async def integration_balances(user: dict = Depends(require_admin)):
+    """Live remaining credits/balance per connected integration (best-effort)."""
+    import httpx
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    integ = (org or {}).get("integrations", {})
+    out = []
+
+    # ElevenLabs — characters remaining this billing period.
+    el_key = integ.get("elevenlabs_api_key", "")
+    if el_key:
+        item = {"provider": "elevenlabs", "label": "ElevenLabs", "unit": "characters", "ok": False, "detail": "", "value": None, "total": None}
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.get("https://api.elevenlabs.io/v1/user/subscription", headers={"xi-api-key": el_key})
+            if r.status_code == 200:
+                d = r.json()
+                used, limit = d.get("character_count", 0), d.get("character_limit", 0)
+                remaining = max(0, (limit or 0) - (used or 0))
+                item.update({"ok": True, "value": remaining, "total": limit,
+                             "detail": f"{remaining:,} of {limit:,} characters left ({d.get('tier', 'plan')})"})
+            elif r.status_code in (401, 403):
+                item["detail"] = "Invalid API key."
+            else:
+                item["detail"] = f"ElevenLabs HTTP {r.status_code}."
+        except Exception as e:
+            item["detail"] = f"Could not reach ElevenLabs: {str(e)[:80]}"
+        out.append(item)
+
+    # Twilio — account balance.
+    sid, token = integ.get("twilio_account_sid", ""), integ.get("twilio_auth_token", "")
+    if sid and token:
+        item = {"provider": "twilio", "label": "Twilio", "unit": "balance", "ok": False, "detail": "", "value": None, "total": None}
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.get(f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Balance.json", auth=(sid, token))
+            if r.status_code == 200:
+                d = r.json()
+                bal, cur = d.get("balance"), d.get("currency", "USD")
+                item.update({"ok": True, "value": bal, "detail": f"{bal} {cur} remaining"})
+            elif r.status_code in (401, 403):
+                item["detail"] = "Invalid Account SID or Auth Token."
+            else:
+                item["detail"] = f"Twilio HTTP {r.status_code}."
+        except Exception as e:
+            item["detail"] = f"Could not reach Twilio: {str(e)[:80]}"
+        out.append(item)
+
+    # 3CX — no billing/credit API.
+    if integ.get("tcx_url"):
+        out.append({"provider": "3cx", "label": "3CX", "unit": "n/a", "ok": True, "value": None, "total": None,
+                    "detail": "3CX has no credit/balance API — usage is billed on your PBX plan."})
+
+    # LLM provider — balance not exposed by a public API.
+    prov = integ.get("llm_provider", "anthropic")
+    if integ.get(f"{prov}_api_key"):
+        out.append({"provider": prov, "label": f"{prov.capitalize()} (LLM)", "unit": "n/a", "ok": True, "value": None,
+                    "total": None, "detail": "Check remaining credit on your provider dashboard — no public balance API."})
+
+    return {"balances": out, "checked_at": now_utc().isoformat()}
 
 
 @router.post("/calls/dial")

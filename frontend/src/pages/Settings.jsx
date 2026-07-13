@@ -89,6 +89,14 @@ function IntegrationsTab() {
     } catch (e) { toast.error(apiErr(e)); }
     finally { setTwilioBusy(false); }
   };
+  const [balances, setBalances] = useState(null);
+  const [balBusy, setBalBusy] = useState(false);
+  const loadBalances = async () => {
+    setBalBusy(true);
+    try { const r = await api.get("/settings/integrations/balances"); setBalances(r.data.balances || []); }
+    catch (e) { toast.error(apiErr(e)); }
+    finally { setBalBusy(false); }
+  };
 
   const validateEleven = async (auto = false) => {
     setElevenBusy(true); setElevenStatus(null);
@@ -152,6 +160,29 @@ function IntegrationsTab() {
 
   return (
     <div className="space-y-4 max-w-3xl">
+      <Section icon={Key} title="Credits & balances" badge={balances ? `${balances.length} connected` : "Check"}>
+        <p className="text-xs text-muted-foreground -mt-1 mb-2">Live remaining credit for each connected provider.</p>
+        <button data-testid="refresh-balances-button" onClick={loadBalances} disabled={balBusy}
+          className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">
+          {balBusy ? "Checking…" : "Check balances"}
+        </button>
+        {balances && (
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2" data-testid="balances-grid">
+            {balances.length === 0 && <p className="text-xs text-muted-foreground">No providers connected yet — add keys below.</p>}
+            {balances.map((b) => (
+              <div key={b.provider} data-testid={`balance-${b.provider}`} className="border border-border rounded-sm p-3 bg-card">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold">{b.label}</span>
+                  <span className={`w-2 h-2 rounded-full ${b.ok ? "bg-success" : "bg-destructive"}`} />
+                </div>
+                {b.value != null && b.unit === "characters" && <div className="text-lg font-bold tnum mt-0.5">{Number(b.value).toLocaleString()} <span className="text-xs font-normal text-muted-foreground">chars</span></div>}
+                {b.value != null && b.unit === "balance" && <div className="text-lg font-bold tnum mt-0.5">{b.value}</div>}
+                <div className="text-xs text-muted-foreground mt-0.5">{b.detail}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
       <Section icon={Phone} title="Telephony provider" badge={(data.telephony_provider || "3cx") === "twilio" ? "Twilio" : "3CX"}>
         <p className="text-xs text-muted-foreground -mt-1 mb-2">Choose which provider places calls (and SMS). Configure the selected one below.</p>
         <div className="inline-flex rounded-sm border border-border overflow-hidden" data-testid="telephony-provider-switch">
@@ -275,19 +306,13 @@ function OrgTab() {
   const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
   const load = useCallback(async () => { const r = await api.get("/settings/org"); setOrg(r.data); }, []);
   useEffect(() => { load(); }, [load]);
-  const save = async () => { try { await api.put("/settings/org", { name: org.name, calling_hours_start: org.calling_hours_start, calling_hours_end: org.calling_hours_end, calling_days: org.calling_days, ai_system_prompt: org.ai_system_prompt || "" }); toast.success("Saved"); } catch (e) { toast.error(apiErr(e)); } };
+  const save = async () => { try { await api.put("/settings/org", { name: org.name, calling_hours_start: org.calling_hours_start, calling_hours_end: org.calling_hours_end, calling_days: org.calling_days}); toast.success("Saved"); } catch (e) { toast.error(apiErr(e)); } };
   if (!org) return <div className="text-sm text-muted-foreground">Loading…</div>;
   const toggleDay = (d) => setOrg({ ...org, calling_days: org.calling_days.includes(d) ? org.calling_days.filter((x) => x !== d) : [...org.calling_days, d] });
   return (
     <div className="space-y-4 max-w-xl">
       <Section icon={Buildings} title="Organisation">
         <F label="Workspace name" testid="org-name-input" value={org.name} onChange={(e) => setOrg({ ...org, name: e.target.value })} />
-      </Section>
-      <Section icon={Brain} title="AI System Prompt (extends the platform prompt)">
-        <textarea data-testid="org-ai-prompt" value={org.ai_system_prompt || ""} onChange={(e) => setOrg({ ...org, ai_system_prompt: e.target.value })} rows={4}
-          placeholder="Add business-specific AI instructions (tone, do's & don'ts). This is appended after the platform-wide prompt."
-          className="w-full rounded-sm border border-input bg-card p-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-        <p className="text-xs text-muted-foreground">Your instructions extend the global platform prompt and apply to all AI scripts and live calls in this workspace.</p>
       </Section>
       <Section icon={Phone} title="UK Calling Hours">
         <div className="grid grid-cols-2 gap-3">

@@ -148,7 +148,6 @@ class OrgUpdateRequest(BaseModel):
     opening_mode: Optional[str] = None         # "scripted" | "kb"
     opening_creativity: Optional[str] = None   # "low" | "medium" | "high"
     opening_max_length: Optional[int] = None
-    ai_system_prompt: Optional[str] = None     # org-level extension to the global AI prompt
     brand_name: Optional[str] = None           # white-label display name
     logo_url: Optional[str] = None             # white-label logo URL
     primary_color: Optional[str] = None        # white-label primary colour (hex)
@@ -172,6 +171,8 @@ class ContactUpdate(BaseModel):
     notes: Optional[str] = None
     status: Optional[str] = None
     consent: Optional[bool] = None
+    callback_at: Optional[str] = None
+    callback_type: Optional[Literal["ai", "human"]] = None
 
 
 # ---------- Scripts ----------
@@ -222,6 +223,11 @@ class CampaignUpdate(BaseModel):
     contact_ids: Optional[List[str]] = None
     schedule_type: Optional[Literal["manual", "scheduled"]] = None
     scheduled_at: Optional[str] = None
+
+
+class CampaignLeadsRequest(BaseModel):
+    contact_ids: List[str]
+    action: Literal["add", "remove"] = "add"
 
 
 # ---------- Voice ----------
@@ -294,12 +300,6 @@ class ImpersonateRequest(BaseModel):
     user_id: Optional[str] = None
     role: Optional[str] = None
     org_id: Optional[str] = None
-
-
-# ---------- Global platform settings (owner) ----------
-class GlobalSettingsUpdate(BaseModel):
-    ai_system_prompt: str = ""
-
 
 # ---------- KB edit ----------
 class KBUpdate(BaseModel):

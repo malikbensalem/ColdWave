@@ -69,30 +69,6 @@ class TestAdminEndpoints:
         r = requests.get(f"{BASE_URL}/api/admin/users", headers=_hdr(admin["access_token"]))
         assert r.status_code == 403
 
-    def test_global_settings_persist(self, owner):
-        prompt = "TEST_GLOBAL Be concise. Always say hi."
-        r = requests.put(f"{BASE_URL}/api/admin/global-settings",
-                         headers=_hdr(owner["access_token"]),
-                         json={"ai_system_prompt": prompt})
-        assert r.status_code == 200
-        assert r.json()["ai_system_prompt"] == prompt
-        r2 = requests.get(f"{BASE_URL}/api/admin/global-settings", headers=_hdr(owner["access_token"]))
-        assert r2.status_code == 200
-        assert r2.json()["ai_system_prompt"] == prompt
-        # cleanup
-        requests.put(f"{BASE_URL}/api/admin/global-settings",
-                     headers=_hdr(owner["access_token"]),
-                     json={"ai_system_prompt": ""})
-
-    def test_global_settings_admin_forbidden(self, admin):
-        r = requests.get(f"{BASE_URL}/api/admin/global-settings", headers=_hdr(admin["access_token"]))
-        assert r.status_code == 403
-        r2 = requests.put(f"{BASE_URL}/api/admin/global-settings",
-                          headers=_hdr(admin["access_token"]),
-                          json={"ai_system_prompt": "x"})
-        assert r2.status_code == 403
-
-
 # ---------- Impersonation ----------
 class TestImpersonation:
     def test_owner_can_impersonate_admin_and_stop(self, owner, admin):

@@ -51,6 +51,9 @@ function CampaignsTab() {
   const [open, setOpen] = useState(false);
   const [queueFor, setQueueFor] = useState(null);
   const [form, setForm] = useState({ name: "", description: "", script_id: "", voice_id: "", audience: "all", contact_ids: [], schedule_type: "manual", scheduled_at: "" });
+  const [editItem, setEditItem] = useState(null);
+  const [editForm, setEditForm] = useState(null);
+  const [editSearch, setEditSearch] = useState("");
 
   const load = useCallback(async () => {
     const [c, s, v, ct] = await Promise.all([api.get("/campaigns"), api.get("/scripts"), api.get("/voices"), api.get("/contacts")]);
@@ -76,6 +79,27 @@ function CampaignsTab() {
   };
   const toggle = async (c) => { await api.put(`/campaigns/${c.id}`, { status: c.status === "active" ? "paused" : "active" }); load(); };
   const remove = async (id) => { await api.delete(`/campaigns/${id}`); load(); };
+
+  const openEdit = (c) => {
+    setEditForm({
+      name: c.name || "", description: c.description || "", script_id: c.script_id || "",
+      voice_id: c.voice_id || "", audience: c.audience || "all", contact_ids: c.contact_ids || [],
+      schedule_type: c.schedule_type || "manual", scheduled_at: c.scheduled_at || "",
+    });
+    setEditSearch(""); setEditItem(c);
+  };
+  const toggleEditContact = (id) => setEditForm((f) => ({ ...f, contact_ids: f.contact_ids.includes(id) ? f.contact_ids.filter((x) => x !== id) : [...f.contact_ids, id] }));
+  const saveEdit = async (e) => {
+    e.preventDefault();
+    if (editForm.audience === "specific" && editForm.contact_ids.length === 0) { toast.error("Pick at least one client, or choose a different audience."); return; }
+    try {
+      const payload = { ...editForm };
+      if (payload.schedule_type !== "scheduled") payload.scheduled_at = null;
+      if (payload.audience !== "specific") payload.contact_ids = [];
+      await api.put(`/campaigns/${editItem.id}`, payload);
+      toast.success("Campaign updated"); setEditItem(null); load();
+    } catch (err) { toast.error(apiErr(err)); }
+  };
 
   return (
     <div className="space-y-4">
@@ -140,6 +164,7 @@ function CampaignsTab() {
             </div>
             <div className="flex gap-2 mt-3 pt-3 border-t border-border">
               <button data-testid={`campaign-queue-${c.id}`} onClick={() => setQueueFor(c)} className="flex-1 inline-flex items-center justify-center gap-1.5 h-8 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90"><QueueIcon size={15} weight="bold" /> Queue</button>
+              <button data-testid={`edit-campaign-${c.id}`} onClick={() => openEdit(c)} title="Edit campaign" className="h-8 px-3 rounded-sm border border-border text-sm font-medium hover:bg-accent"><PencilSimple size={15} /></button>
               <button data-testid={`toggle-campaign-${c.id}`} onClick={() => toggle(c)} className="h-8 px-3 rounded-sm border border-border text-sm font-medium hover:bg-accent">{c.status === "active" ? "Pause" : "Activate"}</button>
               <button onClick={() => remove(c.id)} className="h-8 px-2.5 rounded-sm border border-border text-muted-foreground hover:bg-accent"><Trash size={15} /></button>
             </div>
@@ -149,6 +174,45 @@ function CampaignsTab() {
       </div>
 
       <CampaignQueue campaign={queueFor} onClose={() => setQueueFor(null)} onChanged={load} />
+
+      {/* Edit campaign dialog */}
+      <Dialog open={!!editItem} onOpenChange={(o) => !o && setEditItem(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle className="font-display">Edit campaign</DialogTitle></DialogHeader>
+          {editForm && (
+            <form onSubmit={saveEdit} className="space-y-3" data-testid="edit-campaign-form">
+              <Field label="Campaign name" testid="edit-campaign-name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
+              <Field label="Description" testid="edit-campaign-desc" value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
+              <Sel label="Target audience (CRM filter)" testid="edit-campaign-audience" value={editForm.audience} onChange={(e) => setEditForm({ ...editForm, audience: e.target.value })} options={AUDIENCES} noBlank />
+              {editForm.audience === "specific" && (
+                <div data-testid="edit-campaign-specific-clients">
+                  <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Add / remove leads ({editForm.contact_ids.length} selected)</label>
+                  <input data-testid="edit-campaign-client-search" value={editSearch} onChange={(e) => setEditSearch(e.target.value)} placeholder="Search leads…"
+                    className="mt-1 h-9 w-full rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                  <div className="mt-2 max-h-44 overflow-y-auto border border-border rounded-sm divide-y divide-border/60">
+                    {contacts.filter((c) => !editSearch || `${c.name} ${c.company} ${c.phone}`.toLowerCase().includes(editSearch.toLowerCase())).slice(0, 100).map((c) => (
+                      <label key={c.id} data-testid={`edit-campaign-client-${c.id}`} className="flex items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-accent cursor-pointer">
+                        <input type="checkbox" checked={editForm.contact_ids.includes(c.id)} onChange={() => toggleEditContact(c.id)} className="h-4 w-4" />
+                        <span className="font-medium">{c.name}</span>
+                        <span className="text-xs text-muted-foreground ml-auto tnum">{c.phone}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <Sel label="Script" testid="edit-campaign-script" value={editForm.script_id} onChange={(e) => setEditForm({ ...editForm, script_id: e.target.value })} options={scripts.map((s) => ({ value: s.id, label: s.name }))} />
+              <Sel label="AI Voice" testid="edit-campaign-voice" value={editForm.voice_id} onChange={(e) => setEditForm({ ...editForm, voice_id: e.target.value })} options={voices.map((v) => ({ value: v.id, label: `${v.name} (${v.gender}, ${v.accent})` }))} />
+              <Sel label="Launch" testid="edit-campaign-schedule-type" value={editForm.schedule_type} onChange={(e) => setEditForm({ ...editForm, schedule_type: e.target.value })} options={[{ value: "manual", label: "Manual (dial from queue)" }, { value: "scheduled", label: "Scheduled" }]} noBlank />
+              {editForm.schedule_type === "scheduled" && (
+                <div><label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Scheduled for</label>
+                  <input type="datetime-local" data-testid="edit-campaign-scheduled-at" value={editForm.scheduled_at || ""} onChange={(e) => setEditForm({ ...editForm, scheduled_at: e.target.value })}
+                    className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" /></div>
+              )}
+              <DialogFooter><button data-testid="save-edit-campaign-button" type="submit" className="h-10 px-4 bg-primary text-primary-foreground rounded-sm text-sm font-medium">Save changes</button></DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
