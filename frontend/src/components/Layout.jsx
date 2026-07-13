@@ -5,7 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import api from "../lib/api";
 import { applyBranding } from "../lib/branding";
 import {
-  ChartLineUp, Users, Megaphone, PhoneCall, ShieldCheck, Gear, SignOut, Waveform, WhatsappLogo, EnvelopeSimple, Crown, UserSwitch,
+  ChartLineUp, Users, Megaphone, PhoneCall, ShieldCheck, Gear, SignOut, Waveform, WhatsappLogo, EnvelopeSimple, Crown, UserSwitch, Broadcast,
 } from "@phosphor-icons/react";
 
 const NAV = [
@@ -14,6 +14,7 @@ const NAV = [
   { to: "/campaigns", label: "Campaigns", icon: Megaphone, testid: "nav-campaigns", system: "campaigns" },
   { to: "/email-campaigns", label: "Email Campaigns", icon: EnvelopeSimple, testid: "nav-email-campaigns", system: "email_campaigns" },
   { to: "/test-calls", label: "Test Calls", icon: PhoneCall, testid: "nav-test-calls", system: "test_calls" },
+  { to: "/live-calls", label: "Live Calls", icon: Broadcast, testid: "nav-live-calls", system: "test_calls" },
   { to: "/messaging", label: "WhatsApp", icon: WhatsappLogo, testid: "nav-messaging", system: "whatsapp" },
   { to: "/compliance", label: "Compliance", icon: ShieldCheck, testid: "nav-compliance", system: "compliance" },
   { to: "/settings", label: "Settings", icon: Gear, testid: "nav-settings", system: "__settings" },

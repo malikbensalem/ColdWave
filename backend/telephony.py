@@ -186,3 +186,36 @@ async def twilio_make_call(integ: dict, destination: str, say_text: str = None,
     if r.status_code in (401, 403):
         raise RuntimeError("Twilio rejected the credentials (401/403). Re-check your Account SID / Auth Token.")
     raise RuntimeError(f"Twilio call failed ({r.status_code}): {r.text[:180]}")
+
+
+async def twilio_update_call(integ: dict, call_sid: str, twiml: str) -> dict:
+    """Redirect an in-progress Twilio call to new TwiML (used for human takeover / hangup)."""
+    sid = (integ.get("twilio_account_sid") or "").strip()
+    token = (integ.get("twilio_auth_token") or "").strip()
+    if not (sid and token):
+        raise ValueError("Twilio is not configured.")
+    if not call_sid:
+        raise ValueError("No Twilio call SID for this call.")
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Calls/{call_sid}.json"
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        r = await client.post(url, data={"Twiml": twiml}, auth=(sid, token))
+    if r.status_code in (200, 201):
+        d = r.json()
+        return {"callid": d.get("sid"), "status": d.get("status", "in-progress")}
+    if r.status_code in (401, 403):
+        raise RuntimeError("Twilio rejected the credentials (401/403).")
+    raise RuntimeError(f"Twilio update failed ({r.status_code}): {r.text[:180]}")
+
+
+async def twilio_hangup_call(integ: dict, call_sid: str) -> dict:
+    """End an in-progress Twilio call."""
+    sid = (integ.get("twilio_account_sid") or "").strip()
+    token = (integ.get("twilio_auth_token") or "").strip()
+    if not (sid and token and call_sid):
+        raise ValueError("Twilio is not configured or no call SID.")
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Calls/{call_sid}.json"
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        r = await client.post(url, data={"Status": "completed"}, auth=(sid, token))
+    if r.status_code in (200, 201):
+        return {"status": "completed"}
+    raise RuntimeError(f"Twilio hangup failed ({r.status_code}): {r.text[:180]}")

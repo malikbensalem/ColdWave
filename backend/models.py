@@ -100,6 +100,10 @@ class TwilioTestRequest(BaseModel):
     auth_token: Optional[str] = None
 
 
+class TakeoverRequest(BaseModel):
+    human_number: str
+
+
 # ---------- Org / Settings ----------
 class IntegrationSettings(BaseModel):
     telephony_provider: str = "3cx"  # "3cx" | "twilio"
@@ -113,6 +117,7 @@ class IntegrationSettings(BaseModel):
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
+    twilio_voice_mode: str = "stream"  # "stream" (ConversationRelay, interruptible) | "gather" (turn-based)
     elevenlabs_api_key: str = ""
     elevenlabs_enabled: bool = False
     elevenlabs_model: str = "eleven_multilingual_v2"

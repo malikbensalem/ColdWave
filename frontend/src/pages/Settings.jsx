@@ -189,6 +189,17 @@ function IntegrationsTab() {
           <button data-testid="save-twilio-button" onClick={() => save()} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent">Save</button>
         </div>
         {twilioStatus && <p className={`text-xs ${twilioStatus.valid ? "text-success" : "text-destructive"}`}>{twilioStatus.message}</p>}
+        <div className="mt-2 pt-2 border-t border-border">
+          <p className="text-xs font-medium mb-1.5">AI voice mode</p>
+          <div className="inline-flex rounded-sm border border-border overflow-hidden">
+            {[["stream", "Real-time streaming"], ["gather", "Turn-based"]].map(([v, label]) => (
+              <button key={v} type="button" data-testid={`voice-mode-${v}`}
+                onClick={() => { const next = { ...data, twilio_voice_mode: v }; setData(next); save(next); }}
+                className={`h-8 px-3 text-xs font-medium ${(data.twilio_voice_mode || "stream") === v ? "bg-primary text-primary-foreground" : "bg-card hover:bg-accent"}`}>{label}</button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1.5"><b>Real-time streaming</b> (recommended) uses Twilio ConversationRelay for low-latency, interruptible AI you can monitor & take over live. <b>Turn-based</b> is the classic wait-and-respond mode.</p>
+        </div>
         <p className="text-xs text-muted-foreground">Find your <b>Account SID</b> &amp; <b>Auth Token</b> on the <b>Twilio Console dashboard</b>, and buy/verify a number under <b>Phone Numbers</b>. Select <b>Twilio</b> in “Telephony provider” above to make it the active caller.</p>
       </Section>
 
