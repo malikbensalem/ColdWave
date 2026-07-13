@@ -193,3 +193,21 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - P1: Resolve known iter-3 sticky-LLM-key-on-provider-switch edge case.
 - P1: Wire real 3CX Call Control API; bulk CSV lead import; auto-dialer queue.
 - P2: Vector KB retrieval; analytics export; `$lookup` for admin user/org joins at scale.
+
+## Iteration 16 (2026-07-13) — Real-time streaming voice (ConversationRelay) + Live Calls monitoring + human takeover
+- **Streaming engine pivot (P0 Task 1)**: new `conversation_relay.py` implements Twilio **ConversationRelay** over a WebSocket for low-latency, **interruptible** AI calls. `POST /api/telephony/twilio/relay/voice/{call_id}` returns `<Connect><ConversationRelay url="wss://…/api/telephony/twilio/relay/ws/{call_id}" welcomeGreeting=opening interruptible="any" reportInputDuringAgentSpeech="speech" dtmfDetection="true" voice=<gender-mapped en-GB> language="en-GB"/>`. Uses **Twilio built-in transcription** (per user choice) and the **settings-driven LLM** (agent_reply). WS handles setup/prompt/interrupt/error; cancels the in-flight LLM turn on `interrupt` (barge-in); persists transcript live; analyses transcript on disconnect. Smoke-tested locally end-to-end (setup+prompt → LLM reply streamed back → transcript persisted).
+- **Voice-mode switch**: `IntegrationSettings.twilio_voice_mode` = `stream` (ConversationRelay, default) | `gather` (classic turn-based `twilio_voice.py`). `_twilio_webhooks(call_id, integ)` picks the webhook accordingly. Settings → Integrations → Twilio has a segmented **AI voice mode** control (testids `voice-mode-stream` / `voice-mode-gather`).
+- **Live Calls monitoring + human takeover (P0 Task 2)**: new page `/live-calls` (nav `Live Calls`) polls `GET /api/calls/live/active`, shows active calls + a live transcript panel (2s poll). **Take over** (`POST /api/calls/{id}/takeover {human_number}`) redirects the in-progress Twilio call to `<Dial>` the human (sets `handoff`, stops the AI). **End** (`POST /api/calls/{id}/hangup`) completes the call. Both guard to active Twilio calls only. `telephony.twilio_update_call` / `twilio_hangup_call` added (Twilio REST, no SDK).
+- Verified: iteration_14.json — backend **9/9 pytest pass**; frontend login, nav, Live Calls page render, voice-mode persistence + integrations partial-merge regression all pass. NOTE: true live audio needs a deployed public WSS host + Twilio enabled — verify on deploy (per user).
+- Tradeoff noted: reply is sent as one `text` chunk (ConversationRelay speaks it, interruptible at the audio layer) rather than per-token streaming; sufficient for interruptibility. Per-token streaming is a future refinement.
+
+## Still TODO (user roadmap from message 507)
+- **T3 (P1)** Synced transcript playback + real call recordings.
+- **T4 (P1)** Auto-dial mode (continuously dial the campaign queue).
+- **T5 (P1)** Fully editable campaigns after creation.
+- **T6 (P1)** Campaign lead add/remove + more filters.
+- **T7 (P2)** Email provider (Gmail/O365 OAuth) + SMS section/campaigns in Settings.
+- **T8 (P2)** Provider balances (ElevenLabs/Twilio credits) in Settings.
+- **T9 (P2)** CRM callback labels (AI vs Human).
+- **T10 (P2)** Remove AI System Prompt section from Org Settings.
+- **Refactor**: split `routes.py` (~1140 lines) into routers.
