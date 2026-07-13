@@ -47,7 +47,7 @@ async def _speak(org: dict, voice_id: str, text: str, call_id: str) -> str:
     text = (text or "").strip() or "One moment please."
     if voice_id:
         try:
-            tts = await generate_tts(org, voice_id, text)
+            tts = await generate_tts(org, voice_id, text, model="eleven_flash_v2_5")
             url = tts.get("audio_url")
             if url and url.startswith("data:audio"):
                 raw = base64.b64decode(url.split(",", 1)[1])

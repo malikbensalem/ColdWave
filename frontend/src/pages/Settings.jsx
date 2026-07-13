@@ -229,7 +229,8 @@ function IntegrationsTab() {
                 className={`h-8 px-3 text-xs font-medium ${(data.twilio_voice_mode || "stream") === v ? "bg-primary text-primary-foreground" : "bg-card hover:bg-accent"}`}>{label}</button>
             ))}
           </div>
-          <p className="text-xs text-muted-foreground mt-1.5"><b>Real-time streaming</b> (recommended) uses Twilio ConversationRelay for low-latency, interruptible AI you can monitor & take over live. <b>Turn-based</b> is the classic wait-and-respond mode.</p>
+          <p className="text-xs text-muted-foreground mt-1.5"><b>Real-time streaming</b> (recommended) uses Twilio ConversationRelay for low-latency, interruptible AI you can monitor & take over live — the AI starts speaking on the first word instead of waiting for the full reply. <b>Turn-based</b> is the classic wait-and-respond mode (higher latency).</p>
+          <p className="text-xs text-muted-foreground mt-1">⚡ <b>For sub-1s responses:</b> use Real-time streaming <b>and</b> pick a fast model in the AI Language Model section below — <b>GPT-4o</b> or <b>GPT-4.1-mini</b> reply in ~0.4–0.5s, vs ~1.2s for Claude.</p>
         </div>
         <p className="text-xs text-muted-foreground">Find your <b>Account SID</b> &amp; <b>Auth Token</b> on the <b>Twilio Console dashboard</b>, and buy/verify a number under <b>Phone Numbers</b>. Select <b>Twilio</b> in “Telephony provider” above to make it the active caller.</p>
       </Section>

@@ -18,7 +18,7 @@ from xml.sax.saxutils import escape, quoteattr
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from database import db
-from integrations import agent_reply, analyze_transcript, get_voice
+from integrations import stream_agent_reply, analyze_transcript, get_voice
 
 logger = logging.getLogger("conversation_relay")
 
@@ -112,26 +112,36 @@ def build_conversation_relay_router():
             transcript.append({"role": "prospect", "content": said, "ts": _now()})
             await db.calls.update_one({"id": call_id}, {"$set": {"transcript": transcript}})
 
+            # Stream the LLM reply token-by-token so ConversationRelay starts speaking
+            # on the first token (~300ms) instead of waiting for the full reply.
+            parts = []
             try:
-                reply = await agent_reply(
+                async for chunk in stream_agent_reply(
                     call.get("script_content", ""), transcript, said, session_id=call_id,
                     script_type=call.get("script_type", "line_by_line"),
                     personality=call.get("personality", ""),
-                    company_overview=call.get("company_overview", ""), org=org)
+                    company_overview=call.get("company_overview", ""), org=org):
+                    if not chunk:
+                        continue
+                    parts.append(chunk)
+                    await ws.send_text(json.dumps({"type": "text", "token": chunk, "last": False}))
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"relay agent_reply failed: {e}")
+                logger.error(f"relay stream_agent_reply failed: {e}")
+            reply = ("".join(parts)).strip()
+            if not reply:
                 reply = "Sorry, could you say that again?"
-            reply = (reply or "").strip() or "Thank you."
+                await ws.send_text(json.dumps({"type": "text", "token": reply, "last": False}))
+            # Finalise the current spoken turn.
+            await ws.send_text(json.dumps({"type": "text", "token": "", "last": True}))
             transcript.append({"role": "agent", "content": reply, "ts": _now()})
             await db.calls.update_one({"id": call_id}, {"$set": {"transcript": transcript}})
 
             low = f"{said} {reply}".lower()
             ending = any(h in low for h in CLOSE_HINTS) or any(k in said.lower() for k in OPTOUT_HINTS)
-            await ws.send_text(json.dumps({"type": "text", "token": reply, "last": True}))
             if ending:
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(0.3)
                 await ws.send_text(json.dumps({"type": "end"}))
 
         try:

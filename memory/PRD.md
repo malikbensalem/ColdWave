@@ -211,7 +211,12 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - ~~T10 Remove AI System Prompt from Org Settings~~ ✅ DONE (user removed; confirmed absent).
 - **Refactor**: split `routes.py` and the large page components (Campaigns.jsx, Leads.jsx) into modules.
 
-## Iteration 17 (2026-07-13) — Editable campaigns, campaign lead add/remove, integration balances, CRM callback labels
+## Iteration 18 (2026-07-13) — Live-call latency fix: token-streamed AI voice (sub-1s)
+- **Problem**: live calls took ~10s to respond (text test calls were <1s). Root cause: the voice path `await`ed the FULL LLM reply (~1.7s) before any audio, then synthesised the whole reply with the slow `eleven_multilingual_v2` model, plus `<Gather>` endpointing — compounding to ~10s.
+- **Fix (core)**: ConversationRelay now **streams LLM tokens** to Twilio as they arrive (`integrations.stream_agent_reply` via `LlmChat.stream_message` → `TextDelta`). The AI starts speaking on the **first token** instead of after the full reply. Verified: WS emits multiple incremental `text` chunks + final `last:true`; first chunk ~1.2s (Claude) and continuous thereafter.
+- **Fix (gather fallback)**: `generate_tts` gained a `model` override; the turn-based path now uses the fast **`eleven_flash_v2_5`** model instead of `multilingual_v2`.
+- **Model guidance (measured TTFT via streaming)**: GPT-4o ≈ 0.52s, GPT-4.1-mini ≈ 0.40s (**sub-1s**); Claude Sonnet/Haiku ≈ 1.2s. Settings → Integrations now tells users: for sub-1s pick Real-time streaming voice mode **and** a fast OpenAI model in the AI Language Model section.
+- To benefit: org must use **Real-time streaming** voice mode (default) — verify on deployed env (ConversationRelay needs public WSS).
 - **T5 Editable campaigns**: campaign cards now have an **Edit** (pencil) button → dialog to edit name/description/audience/script/voice/schedule, saved via existing `PUT /api/campaigns/{id}`.
 - **T6 Add/remove leads**: edit dialog supports switching audience to **Specific clients** with an add/remove lead picker. New backend `POST /api/campaigns/{id}/leads {contact_ids, action: add|remove}` (sets audience='specific', updates contact_ids).
 - **T8 Credits & balances**: new `GET /api/settings/integrations/balances` fetches live remaining credit — **ElevenLabs** characters (v1/user/subscription), **Twilio** account balance (Balance.json); 3CX & LLM shown as informational (no public balance API). Settings → Integrations shows a **Credits & balances** section with a "Check balances" button.

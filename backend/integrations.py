@@ -227,9 +227,7 @@ def _company_block(company_overview: str) -> str:
             f"question, including ones not covered by the script):\n{company_overview[:4000]}")
 
 
-async def agent_reply(script: str, history: list, prospect_message: str, session_id: str,
-                      script_type: str = "line_by_line", personality: str = "",
-                      company_overview: str = "", org: dict = None) -> str:
+def _agent_system_and_prompt(script, history, prospect_message, script_type, personality, company_overview):
     compliance = (
         "If the prospect asks to be removed, says 'not interested', 'stop calling', 'opt out', or "
         "'do not call', you MUST immediately, politely confirm you will remove them and end the call. "
@@ -257,7 +255,39 @@ async def agent_reply(script: str, history: list, prospect_message: str, session
         )
     convo = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in history])
     prompt = f"Conversation so far:\n{convo}\n\nPROSPECT: {prospect_message}\n\nAGENT:"
+    return system, prompt
+
+
+async def agent_reply(script: str, history: list, prospect_message: str, session_id: str,
+                      script_type: str = "line_by_line", personality: str = "",
+                      company_overview: str = "", org: dict = None) -> str:
+    system, prompt = _agent_system_and_prompt(script, history, prospect_message, script_type, personality, company_overview)
     return await llm_generate(session_id, system, prompt, org)
+
+
+async def stream_agent_reply(script: str, history: list, prospect_message: str, session_id: str,
+                             script_type: str = "line_by_line", personality: str = "",
+                             company_overview: str = "", org: dict = None):
+    """Async generator yielding partial reply text as the LLM produces it (for live voice streaming).
+    Falls back to a single full-reply yield if streaming is unavailable."""
+    system, prompt = _agent_system_and_prompt(script, history, prospect_message, script_type, personality, company_overview)
+    cfg = llm_config(org or {})
+    prefix = (org or {}).get("_system_prefix", "")
+    sys_msg = f"{prefix}\n\n{system}" if prefix else system
+    if _HAS_EMERGENT:
+        try:
+            from emergentintegrations.llm.chat import TextDelta
+            chat = LlmChat(api_key=cfg["api_key"], session_id=session_id, system_message=sys_msg).with_model(cfg["provider"], cfg["model"])
+            async for ev in chat.stream_message(UserMessage(text=prompt)):
+                if isinstance(ev, TextDelta) and ev.content:
+                    yield ev.content
+            return
+        except Exception as e:
+            logger.error(f"stream_agent_reply streaming failed, falling back: {e}")
+    # Fallback: non-streaming full reply in one chunk.
+    full = await llm_generate(session_id, system, prompt, org)
+    if full:
+        yield full
 
 
 async def generate_opening_line(org: dict, script_content: str, personality: str, script_type: str,
@@ -354,9 +384,10 @@ def _dynamic_voice_params(text: str) -> tuple:
     return (0.50, 0.30, 1.0)
 
 
-async def generate_tts(org: dict, voice_id: str, text: str) -> dict:
+async def generate_tts(org: dict, voice_id: str, text: str, model: str = None) -> dict:
     """Generate speech using the selected provider. Logs selection; never falls back silently
-    when a valid ElevenLabs key exists. Returns {provider, voice, audio_url, reason, error}."""
+    when a valid ElevenLabs key exists. Returns {provider, voice, audio_url, reason, error}.
+    Pass `model` to override the org's ElevenLabs model (e.g. a fast real-time model for live calls)."""
     selection = select_tts_provider(org)
     voice = get_voice(voice_id)
     integ = (org or {}).get("integrations", {})
@@ -405,7 +436,7 @@ async def generate_tts(org: dict, voice_id: str, text: str) -> dict:
         #     vs_kwargs.pop("speed", None)  # older SDK without speed support
         #     settings = VoiceSettings(**vs_kwargs)
 
-        model_id = integ.get("elevenlabs_model", "eleven_multilingual_v2")
+        model_id = model or integ.get("elevenlabs_model", "eleven_multilingual_v2")
         # audio = client.text_to_speech.convert(
         #     text=text[:600], voice_id=voice["elevenlabs_voice_id"],
         #     model_id=model_id, voice_settings=settings)
