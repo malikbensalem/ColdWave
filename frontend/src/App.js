@@ -12,7 +12,6 @@ import Campaigns from "./pages/Campaigns";
 import EmailCampaigns from "./pages/EmailCampaigns";
 import PlatformAdmin from "./pages/PlatformAdmin";
 import TestCalls from "./pages/TestCalls";
-import LiveCalls from "./pages/LiveCalls";
 import Messaging from "./pages/Messaging";
 import Compliance from "./pages/Compliance";
 import Settings from "./pages/Settings";
@@ -47,7 +46,6 @@ function AppRoutes() {
         <Route path="/email-campaigns" element={<EmailCampaigns />} />
         <Route path="/admin" element={<PlatformAdmin />} />
         <Route path="/test-calls" element={<TestCalls />} />
-        <Route path="/live-calls" element={<LiveCalls />} />
         <Route path="/messaging" element={<Messaging />} />
         <Route path="/compliance" element={<Compliance />} />
         <Route path="/settings" element={<Settings />} />

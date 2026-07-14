@@ -43,7 +43,6 @@ export default function TestCalls() {
   };
 
   const start = async () => {
-    if (!setup.voice_id) { toast.error("Pick a voice first"); return; }
     setBusy(true);
     try {
       const { data } = await api.post("/calls/test/start", setup);
@@ -51,12 +50,12 @@ export default function TestCalls() {
       setVoiceGender(v?.gender || "female");
       setCall(data);
       setEnded(false);
-      setCallMeta({ tts_provider: data.tts_provider, tts_error: data.tts_error, opening_meta: data.opening_meta });
+      setCallMeta({ tts_provider: data.tts_provider, tts_error: data.tts_error, opening_meta: data.opening_meta, llm_model: data.llm_model, llm_provider: data.llm_provider });
       setMessages([{ role: "agent", content: data.opening }]);
       setAnalysis(null);
       if (data.tts_error) toast.error(`ElevenLabs error: ${data.tts_error}`);
       else if (data.tts_provider === "elevenlabs") toast.success("Using ElevenLabs voice");
-      speak(data.audio_url, data.opening, v?.gender);
+      if (setup.voice_id) speak(data.audio_url, data.opening, v?.gender);
     } catch (err) { toast.error(apiErr(err)); }
     finally { setBusy(false); }
   };
@@ -70,7 +69,7 @@ export default function TestCalls() {
     try {
       const { data } = await api.post("/calls/test/turn", { call_id: call.call_id, message: msg });
       setMessages((m) => [...m, { role: "agent", content: data.reply }]);
-      speak(data.audio_url, data.reply, voiceGender);
+      if (call.voice) speak(data.audio_url, data.reply, voiceGender);
     } catch (err) { toast.error(apiErr(err)); }
     finally { setBusy(false); }
   };
@@ -102,9 +101,10 @@ export default function TestCalls() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Sel label="Campaign (optional)" testid="setup-campaign" value={setup.campaign_id} onChange={(e) => setSetup({ ...setup, campaign_id: e.target.value })} options={campaigns.map((c) => ({ value: c.id, label: c.name }))} />
             <Sel label="Script" testid="setup-script" value={setup.script_id} onChange={(e) => setSetup({ ...setup, script_id: e.target.value })} options={scripts.map((s) => ({ value: s.id, label: s.name }))} />
-            <Sel label="AI Voice *" testid="setup-voice" value={setup.voice_id} onChange={(e) => setSetup({ ...setup, voice_id: e.target.value })} options={voices.map((v) => ({ value: v.id, label: `${v.name} (${v.gender}, ${v.accent})` }))} />
+            <Sel label="AI Voice" testid="setup-voice" value={setup.voice_id} onChange={(e) => setSetup({ ...setup, voice_id: e.target.value })} options={[{ value: "", label: "No voice (text only)" }, ...voices.map((v) => ({ value: v.id, label: `${v.name} (${v.gender}, ${v.accent})` }))]} />
             <Sel label="Link to lead (optional)" testid="setup-contact" value={setup.contact_id} onChange={(e) => setSetup({ ...setup, contact_id: e.target.value })} options={contacts.map((c) => ({ value: c.id, label: `${c.name} — ${c.company}` }))} />
           </div>
+          <p className="text-xs text-muted-foreground" data-testid="setup-voice-hint">Pick <b>No voice</b> to test by text only. The AI language model is set in <b>Settings → AI Language Model</b>.</p>
           <button data-testid="start-call-button" onClick={start} disabled={busy} className="inline-flex items-center gap-2 h-11 px-5 bg-primary text-primary-foreground rounded-sm text-sm font-medium hover:opacity-90 disabled:opacity-60">
             <PhoneCall size={18} weight="fill" /> {busy ? "Connecting…" : "Start Test Call"}
           </button>
@@ -114,7 +114,7 @@ export default function TestCalls() {
           <div className="lg:col-span-2 bg-card border border-border rounded-sm flex flex-col h-[60vh]">
             <div className="h-12 border-b border-border flex items-center justify-between px-4">
               <div className="flex items-center gap-2 text-sm font-medium">
-                <span className={`h-2 w-2 rounded-full ${ended ? "bg-muted-foreground" : "bg-success live-dot"}`} /> {ended ? "Call ended" : "Live test"} · {call.voice?.name}
+                <span className={`h-2 w-2 rounded-full ${ended ? "bg-muted-foreground" : "bg-success live-dot"}`} /> {ended ? "Call ended" : "Live test"} · {call.voice?.name || "Text only"}
                 <SpeakerHigh size={15} className="text-muted-foreground" />
               </div>
               {ended ? (
@@ -146,7 +146,8 @@ export default function TestCalls() {
           <div className="space-y-3">
             {callMeta && (
               <div className="bg-card border border-border rounded-sm p-4 text-xs space-y-1.5" data-testid="call-diagnostics">
-                <div className="flex justify-between"><span className="text-muted-foreground">Voice engine</span><span className={`font-semibold ${callMeta.tts_provider === "elevenlabs" ? "text-success" : callMeta.tts_provider === "elevenlabs_error" ? "text-destructive" : ""}`}>{callMeta.tts_provider === "elevenlabs" ? "ElevenLabs" : callMeta.tts_provider === "elevenlabs_error" ? "ElevenLabs (error)" : "Browser (mock)"}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Voice engine</span><span className={`font-semibold ${callMeta.tts_provider === "elevenlabs" ? "text-success" : callMeta.tts_provider === "elevenlabs_error" ? "text-destructive" : ""}`}>{callMeta.tts_provider === "elevenlabs" ? "ElevenLabs" : callMeta.tts_provider === "elevenlabs_error" ? "ElevenLabs (error)" : (call.voice ? "Browser (mock)" : "No voice (text only)")}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">AI model</span><span data-testid="test-llm-model" className="font-semibold">{callMeta.llm_model || "—"}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Opening mode</span><span className="font-semibold capitalize">{callMeta.opening_meta?.mode}{callMeta.opening_meta?.fallback ? " (fallback)" : ""}</span></div>
                 {callMeta.opening_meta?.sources?.length > 0 && <div className="flex justify-between"><span className="text-muted-foreground">KB sources</span><span className="font-medium text-right">{callMeta.opening_meta.sources.join(", ")}</span></div>}
               </div>

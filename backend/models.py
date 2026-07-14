@@ -124,12 +124,16 @@ class IntegrationSettings(BaseModel):
     elevenlabs_stability: float = 0.5
     elevenlabs_similarity: float = 0.75
     elevenlabs_style: float = 0.0
+    elevenlabs_speed: float = 1.0
     o365_enabled: bool = False
     o365_tenant_id: str = ""
     o365_client_id: str = ""
     o365_client_secret: str = ""
     llm_provider: str = "anthropic"
     llm_model: str = "claude-sonnet-4-6"
+    llm_temperature: float = 0.6
+    llm_max_sentences: int = 2
+    llm_chunking: bool = True
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     gemini_api_key: str = ""

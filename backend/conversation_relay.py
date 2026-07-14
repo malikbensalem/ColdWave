@@ -16,6 +16,7 @@ No auth on these routes — Twilio calls them; they are keyed by the (unguessabl
 """
 import time
 import json
+import re
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -32,6 +33,7 @@ logger = logging.getLogger("conversation_relay")
 CLOSE_HINTS = ("goodbye", "bye for now", "have a great day", "take care", "remove you",
                "removed you", "won't call", "won't contact")
 OPTOUT_HINTS = ("not interested", "opt out", "stop calling", "do not call", "remove me")
+_SENTENCE_END = re.compile(r'[.!?…]+["\')\]]*(\s|$)')
 
 # Google en-GB voices for Twilio's built-in TTS (no extra account config needed).
 _VOICE_BY_GENDER = {"male": "en-GB-Standard-B", "female": "en-GB-Standard-A"}
@@ -175,10 +177,17 @@ def build_conversation_relay_router():
                 return
             call = ctx["call"]
             ctx["transcript"].append({"role": "prospect", "content": said, "ts": _now()})
+            integ = (ctx["org"] or {}).get("integrations", {})
+            chunking = integ.get("llm_chunking", True)
 
             t0 = time.time()
             first_at = None
             parts = []
+            buffer = ""
+
+            async def _send(txt):
+                await ws.send_text(json.dumps({"type": "text", "token": txt, "last": False}))
+
             try:
                 async for chunk in stream_agent_reply(
                     call.get("script_content", ""), ctx["transcript"], said, session_id=call_id,
@@ -190,17 +199,32 @@ def build_conversation_relay_router():
                     if first_at is None:
                         first_at = time.time() - t0
                     parts.append(chunk)
-                    await ws.send_text(json.dumps({"type": "text", "token": chunk, "last": False}))
+                    if chunking:
+                        # Emit complete sentences so long replies are spoken naturally
+                        # (Twilio TTS gets whole clauses, not fragmented tokens).
+                        buffer += chunk
+                        while True:
+                            m = _SENTENCE_END.search(buffer)
+                            if not m:
+                                break
+                            sentence = buffer[:m.end()].strip()
+                            buffer = buffer[m.end():]
+                            if sentence:
+                                await _send(sentence)
+                    else:
+                        await _send(chunk)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 logger.error(f"relay stream_agent_reply failed: {e}")
+            if chunking and buffer.strip():
+                await _send(buffer.strip())
             reply = ("".join(parts)).strip()
             if not reply:
                 reply = "Sorry, could you say that again?"
-                await ws.send_text(json.dumps({"type": "text", "token": reply, "last": False}))
+                await _send(reply)
             await ws.send_text(json.dumps({"type": "text", "token": "", "last": True}))
-            logger.info(f"relay turn {call_id}: first_token={first_at:.2f}s full={time.time()-t0:.2f}s len={len(reply)}")
+            logger.info(f"relay turn {call_id}: first_token={(first_at or 0):.2f}s full={time.time()-t0:.2f}s len={len(reply)}")
 
             ctx["transcript"].append({"role": "agent", "content": reply, "ts": _now()})
             await _persist_transcript()

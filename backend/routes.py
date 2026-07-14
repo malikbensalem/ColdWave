@@ -732,11 +732,13 @@ async def start_test_call(req: TestCallStartRequest, user: dict = Depends(get_cu
         "created_at": now_utc().isoformat(),
     }
     await db.calls.insert_one(dict(call))
+    _cfg = llm_config(org)
     return {
         "call_id": call["id"], "voice": voice, "opening": opening,
         "tts_provider": tts["provider"], "tts_reason": tts.get("reason"),
         "tts_error": tts.get("error"), "audio_url": tts.get("audio_url"),
         "opening_meta": opening_meta,
+        "llm_provider": _cfg["provider"], "llm_model": _cfg["model"],
         "elevenlabs_enabled": select_tts_provider(org)["provider"] == "elevenlabs",
     }
 

@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { MagnifyingGlass, Plus, Trash, PhoneCall, ShieldSlash, FileText, ChatText, Star } from "@phosphor-icons/react";
+import { CallMonitor } from "../components/CallMonitor";
 
 const STATUSES = ["all", "new", "contacted", "positive", "callback", "opted_out", "dnc"];
 
@@ -47,6 +48,8 @@ export default function Leads() {
   const [callTarget, setCallTarget] = useState(null); // contact to dial
   const [campaigns, setCampaigns] = useState([]);
   const [callCampaignId, setCallCampaignId] = useState("");
+  const [listenIn, setListenIn] = useState(true);
+  const [monitorCallId, setMonitorCallId] = useState(null);
   const [form, setForm] = useState({ name: "", phone: "", email: "", company: "", notes: "", consent: false });
   const [cbDate, setCbDate] = useState("");
   const [cbType, setCbType] = useState("human");
@@ -127,7 +130,9 @@ export default function Leads() {
       const { data } = await api.post("/calls/dial", { contact_id: contact.id, campaign_id: callCampaignId || null });
       const via = data.provider === "twilio" ? "Twilio" : "3CX";
       toast.success(`Calling ${contact.name} via ${via}${callCampaignId ? " · " + (campaigns.find((c) => c.id === callCampaignId)?.name || "campaign") : ""} (${data.status || "initiated"})`);
+      const newCallId = data.call?.id;
       setCallTarget(null);
+      if (listenIn && newCallId) setMonitorCallId(newCallId);
       load();
     } catch (err) { toast.error(apiErr(err)); }
     finally { setDialing(null); }
@@ -340,6 +345,10 @@ export default function Leads() {
               </select>
             </div>
             <div className="text-xs text-muted-foreground tnum">Dialing: {callTarget?.phone}</div>
+            <label data-testid="listen-in-toggle" className="flex items-center gap-2 text-sm cursor-pointer pt-1">
+              <input type="checkbox" checked={listenIn} onChange={(e) => setListenIn(e.target.checked)} className="h-4 w-4" />
+              Listen in on this call (live transcript + take over)
+            </label>
           </div>
           <DialogFooter>
             <button data-testid="confirm-dial-button" onClick={confirmDial} disabled={dialing === callTarget?.id}
@@ -349,6 +358,8 @@ export default function Leads() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CallMonitor callId={monitorCallId} onClose={() => setMonitorCallId(null)} />
 
       {/* Summary / Transcript viewer */}
       <Dialog open={!!viewer} onOpenChange={(o) => !o && setViewer(null)}>

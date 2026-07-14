@@ -95,9 +95,10 @@ function IntegrationsTab() {
   const loadBalances = async () => {
     setBalBusy(true);
     try { const r = await api.get("/settings/integrations/balances"); setBalances(r.data.balances || []); }
-    catch (e) { toast.error(apiErr(e)); }
+    catch (e) { /* silent */ }
     finally { setBalBusy(false); }
   };
+  useEffect(() => { loadBalances(); }, []);
 
   const validateEleven = async (auto = false) => {
     setElevenBusy(true); setElevenStatus(null);
@@ -156,7 +157,7 @@ function IntegrationsTab() {
     setData({ ...data, llm_provider: p, llm_model: models[0] || data.llm_model });
     setLlmStatus(null);
   };
-  const set = (k) => (e) => setData({ ...data, [k]: e.target.type === "checkbox" ? e.target.checked : (e.target.type === "number" ? parseFloat(e.target.value) : e.target.value) });
+  const set = (k) => (e) => setData({ ...data, [k]: e.target.type === "checkbox" ? e.target.checked : (e.target.type === "number" || e.target.type === "range" ? parseFloat(e.target.value) : e.target.value) });
   if (!data) return <div className="text-sm text-muted-foreground">Loading…</div>;
 
   return (
@@ -245,8 +246,20 @@ function IntegrationsTab() {
           <div data-testid="eleven-validate-result" className={`text-xs rounded-sm p-2 border ${elevenStatus.valid ? "border-success/40 bg-success/10 text-success" : "border-destructive/40 bg-destructive/10 text-destructive"}`}>{elevenStatus.message}</div>
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Sel label="Model" testid="eleven-model" value={data.elevenlabs_model || "eleven_multilingual_v2"} onChange={set("elevenlabs_model")} options={elevenModels.map((m) => ({ value: m, label: m }))} />
+          <Sel label="TTS model" testid="eleven-model" value={data.elevenlabs_model || "eleven_multilingual_v2"} onChange={set("elevenlabs_model")} options={[
+            { value: "eleven_flash_v2_5", label: "Flash v2.5 (fastest, lowest latency)" },
+            { value: "eleven_turbo_v2_5", label: "Turbo v2.5 (fast, good quality)" },
+            { value: "eleven_multilingual_v2", label: "Multilingual v2 (highest quality)" },
+            ...elevenModels.filter((m) => !["eleven_flash_v2_5", "eleven_turbo_v2_5", "eleven_multilingual_v2"].includes(m)).map((m) => ({ value: m, label: m })),
+          ]} />
         </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Rng label="Stability" testid="eleven-stability" min={0} max={1} step={0.05} value={data.elevenlabs_stability ?? 0.5} onChange={set("elevenlabs_stability")} />
+          <Rng label="Similarity" testid="eleven-similarity" min={0} max={1} step={0.05} value={data.elevenlabs_similarity ?? 0.75} onChange={set("elevenlabs_similarity")} />
+          <Rng label="Style" testid="eleven-style" min={0} max={1} step={0.05} value={data.elevenlabs_style ?? 0.0} onChange={set("elevenlabs_style")} />
+          <Rng label="Speed" testid="eleven-speed" min={0.7} max={1.2} step={0.05} value={data.elevenlabs_speed ?? 1.0} onChange={set("elevenlabs_speed")} />
+        </div>
+        <p className="text-xs text-muted-foreground">Use <b>Flash v2.5</b> for the lowest latency on live calls. Lower stability = more expressive; higher = more consistent.</p>
         <p className="text-xs text-muted-foreground">Paste a key and it validates automatically — if valid, voices are enabled and saved. Test calls then use ElevenLabs audio (no silent fallback).</p>
       </Section>
 
@@ -265,6 +278,17 @@ function IntegrationsTab() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Sel label="Provider" testid="llm-provider" value={data.llm_provider} onChange={setProvider} options={[{ value: "anthropic", label: "Anthropic (Claude)" }, { value: "openai", label: "OpenAI" }, { value: "gemini", label: "Google Gemini" }]} />
           <Sel label="Model" testid="llm-model" value={data.llm_model} onChange={set("llm_model")} options={(llmModels[data.llm_provider] || []).map((m) => ({ value: m, label: m }))} />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 items-end">
+          <Rng label="Temperature" testid="llm-temperature" min={0} max={1} step={0.1} value={data.llm_temperature ?? 0.6} onChange={set("llm_temperature")} />
+          <div>
+            <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Max reply length</label>
+            <select data-testid="llm-max-sentences" value={data.llm_max_sentences ?? 2} onChange={set("llm_max_sentences")}
+              className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n} sentence{n > 1 ? "s" : ""}</option>)}
+            </select>
+          </div>
+          <Toggle testid="llm-chunking" label="Chunk long replies (natural)" checked={data.llm_chunking ?? true} onChange={set("llm_chunking")} />
         </div>
         <F label={`${data.llm_provider} API key (auto-validates on paste — leave blank to use the Emergent key)`} testid="llm-key" type="password"
           value={data[PROVIDER_KEY[data.llm_provider]] || ""} onChange={set(PROVIDER_KEY[data.llm_provider])} placeholder="Bring your own key for the selected provider…" />
@@ -642,4 +666,15 @@ function Sel({ label, testid, options, ...rest }) {
 }
 function Toggle({ label, testid, checked, onChange }) {
   return <label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" data-testid={testid} checked={checked} onChange={onChange} className="h-4 w-4" />{label}</label>;
+}
+function Rng({ label, testid, value, onChange, min, max, step }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <label className="text-xs uppercase tracking-[0.12em] font-semibold text-muted-foreground">{label}</label>
+        <span className="text-xs tabular-nums text-foreground">{Number(value ?? 0).toFixed(2)}</span>
+      </div>
+      <input type="range" data-testid={testid} min={min} max={max} step={step} value={value ?? 0} onChange={onChange} className="mt-1.5 w-full accent-primary cursor-pointer" />
+    </div>
+  );
 }

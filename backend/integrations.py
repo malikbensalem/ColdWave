@@ -108,9 +108,20 @@ def llm_config(org: dict) -> dict:
     if model not in LLM_MODELS[provider]:
         model = DEFAULT_MODEL[provider]
     custom_key = integ.get(PROVIDER_KEY_FIELD[provider], "")
+    try:
+        temperature = float(integ.get("llm_temperature", 0.6))
+    except (TypeError, ValueError):
+        temperature = 0.6
+    try:
+        max_sentences = int(integ.get("llm_max_sentences", 2))
+    except (TypeError, ValueError):
+        max_sentences = 2
+    chunking = integ.get("llm_chunking", True)
+    common = {"provider": provider, "model": model, "temperature": temperature,
+              "max_sentences": max_sentences, "chunking": chunking}
     if custom_key:
-        return {"provider": provider, "model": model, "api_key": custom_key, "source": "custom"}
-    return {"provider": provider, "model": model, "api_key": EMERGENT_LLM_KEY, "source": "emergent"}
+        return {**common, "api_key": custom_key, "source": "custom"}
+    return {**common, "api_key": EMERGENT_LLM_KEY, "source": "emergent"}
 
 
 async def validate_llm_key(provider: str, api_key: str, model: str = "") -> dict:
@@ -227,7 +238,7 @@ def _company_block(company_overview: str) -> str:
             f"question, including ones not covered by the script):\n{company_overview[:4000]}")
 
 
-def _agent_system_and_prompt(script, history, prospect_message, script_type, personality, company_overview, brief=False):
+def _agent_system_and_prompt(script, history, prospect_message, script_type, personality, company_overview, brief=False, max_sentences=2):
     compliance = (
         "If the prospect asks to be removed, says 'not interested', 'stop calling', 'opt out', or "
         "'do not call', you MUST immediately, politely confirm you will remove them and end the call. "
@@ -235,8 +246,9 @@ def _agent_system_and_prompt(script, history, prospect_message, script_type, per
         "Output ONLY the agent's spoken words."
     )
     if brief:
-        compliance += (" This is a LIVE PHONE CALL — reply in ONE short, natural sentence (occasionally two). "
-                       "Never monologue; ask a question or make a single point, then stop.")
+        n = max(1, int(max_sentences or 2))
+        compliance += (f" This is a LIVE PHONE CALL — reply in at most {n} short, natural sentence(s). "
+                       "Never monologue; make a single point or ask a question, then stop.")
     if script_type == "personality":
         system = (
             "You are an AI outbound sales agent on a live UK cold call. You EMBODY the persona below and "
@@ -273,14 +285,19 @@ async def stream_agent_reply(script: str, history: list, prospect_message: str, 
                              company_overview: str = "", org: dict = None, brief: bool = False):
     """Async generator yielding partial reply text as the LLM produces it (for live voice streaming).
     Falls back to a single full-reply yield if streaming is unavailable."""
-    system, prompt = _agent_system_and_prompt(script, history, prospect_message, script_type, personality, company_overview, brief=brief)
     cfg = llm_config(org or {})
+    system, prompt = _agent_system_and_prompt(script, history, prospect_message, script_type, personality,
+                                              company_overview, brief=brief, max_sentences=cfg.get("max_sentences", 2))
     prefix = (org or {}).get("_system_prefix", "")
     sys_msg = f"{prefix}\n\n{system}" if prefix else system
     if _HAS_EMERGENT:
         try:
             from emergentintegrations.llm.chat import TextDelta
             chat = LlmChat(api_key=cfg["api_key"], session_id=session_id, system_message=sys_msg).with_model(cfg["provider"], cfg["model"])
+            try:
+                chat = chat.with_params(temperature=cfg.get("temperature", 0.6))
+            except Exception:
+                pass
             async for ev in chat.stream_message(UserMessage(text=prompt)):
                 if isinstance(ev, TextDelta) and ev.content:
                     yield ev.content
@@ -414,39 +431,33 @@ async def generate_tts(org: dict, voice_id: str, text: str, model: str = None) -
         # Base values: per-voice override → org integration setting → default.
         stability = vc.get("stability", integ.get("elevenlabs_stability", 0.5))
         style = vc.get("style", integ.get("elevenlabs_style", 0.0))
-        speed = vc.get("speed", 1.0)
+        similarity = integ.get("elevenlabs_similarity", 0.75)
+        speed = vc.get("speed", integ.get("elevenlabs_speed", 1.0))
 
         # Dynamic delivery: vary stability/style/speed by the utterance's context.
         if vc.get("dynamic"):
             stability, style, speed = _dynamic_voice_params(text)
 
-        # vs_kwargs = dict(
-        #     stability=float(max(0.0, min(1.0, float(stability)))),
-        #     similarity_boost=float(integ.get("elevenlabs_similarity", 0.75)),
-        #     style=float(max(0.0, min(1.0, float(style)))),
-        #     use_speaker_boost=True,
-        # )
-
-        # try:
-        #     vs_kwargs["speed"] = max(0.7, min(1.2, float(speed)))
-            
-        # except (TypeError, ValueError):
-        #     pass
-        # try:
-        #     settings = VoiceSettings(**vs_kwargs)
-
-        # except TypeError:
-        #     vs_kwargs.pop("speed", None)  # older SDK without speed support
-        #     settings = VoiceSettings(**vs_kwargs)
+        vs_kwargs = dict(
+            stability=float(max(0.0, min(1.0, float(stability)))),
+            similarity_boost=float(max(0.0, min(1.0, float(similarity)))),
+            style=float(max(0.0, min(1.0, float(style)))),
+            use_speaker_boost=True,
+        )
+        try:
+            vs_kwargs["speed"] = float(max(0.7, min(1.2, float(speed))))
+        except (TypeError, ValueError):
+            pass
+        try:
+            settings = VoiceSettings(**vs_kwargs)
+        except TypeError:
+            vs_kwargs.pop("speed", None)  # older SDK without speed support
+            settings = VoiceSettings(**vs_kwargs)
 
         model_id = model or integ.get("elevenlabs_model", "eleven_multilingual_v2")
-        # audio = client.text_to_speech.convert(
-        #     text=text[:600], voice_id=voice["elevenlabs_voice_id"],
-        #     model_id=model_id, voice_settings=settings)
-
         audio = client.text_to_speech.convert(
             text=text[:600], voice_id=voice["elevenlabs_voice_id"],
-            model_id=model_id)
+            model_id=model_id, voice_settings=settings)
         data = b""
 
         for chunk in audio:
