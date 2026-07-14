@@ -227,13 +227,16 @@ def _company_block(company_overview: str) -> str:
             f"question, including ones not covered by the script):\n{company_overview[:4000]}")
 
 
-def _agent_system_and_prompt(script, history, prospect_message, script_type, personality, company_overview):
+def _agent_system_and_prompt(script, history, prospect_message, script_type, personality, company_overview, brief=False):
     compliance = (
         "If the prospect asks to be removed, says 'not interested', 'stop calling', 'opt out', or "
         "'do not call', you MUST immediately, politely confirm you will remove them and end the call. "
         "Never use misleading claims. Keep responses short and human, like real speech. "
         "Output ONLY the agent's spoken words."
     )
+    if brief:
+        compliance += (" This is a LIVE PHONE CALL — reply in ONE short, natural sentence (occasionally two). "
+                       "Never monologue; ask a question or make a single point, then stop.")
     if script_type == "personality":
         system = (
             "You are an AI outbound sales agent on a live UK cold call. You EMBODY the persona below and "
@@ -267,10 +270,10 @@ async def agent_reply(script: str, history: list, prospect_message: str, session
 
 async def stream_agent_reply(script: str, history: list, prospect_message: str, session_id: str,
                              script_type: str = "line_by_line", personality: str = "",
-                             company_overview: str = "", org: dict = None):
+                             company_overview: str = "", org: dict = None, brief: bool = False):
     """Async generator yielding partial reply text as the LLM produces it (for live voice streaming).
     Falls back to a single full-reply yield if streaming is unavailable."""
-    system, prompt = _agent_system_and_prompt(script, history, prospect_message, script_type, personality, company_overview)
+    system, prompt = _agent_system_and_prompt(script, history, prospect_message, script_type, personality, company_overview, brief=brief)
     cfg = llm_config(org or {})
     prefix = (org or {}).get("_system_prefix", "")
     sys_msg = f"{prefix}\n\n{system}" if prefix else system

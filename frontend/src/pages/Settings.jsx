@@ -91,6 +91,7 @@ function IntegrationsTab() {
   };
   const [balances, setBalances] = useState(null);
   const [balBusy, setBalBusy] = useState(false);
+  const webhookBase = (process.env.REACT_APP_BACKEND_URL || window.location.origin).replace(/\/$/, "");
   const loadBalances = async () => {
     setBalBusy(true);
     try { const r = await api.get("/settings/integrations/balances"); setBalances(r.data.balances || []); }
@@ -221,16 +222,14 @@ function IntegrationsTab() {
         </div>
         {twilioStatus && <p className={`text-xs ${twilioStatus.valid ? "text-success" : "text-destructive"}`}>{twilioStatus.message}</p>}
         <div className="mt-2 pt-2 border-t border-border">
-          <p className="text-xs font-medium mb-1.5">AI voice mode</p>
-          <div className="inline-flex rounded-sm border border-border overflow-hidden">
-            {[["stream", "Real-time streaming"], ["gather", "Turn-based"]].map(([v, label]) => (
-              <button key={v} type="button" data-testid={`voice-mode-${v}`}
-                onClick={() => { const next = { ...data, twilio_voice_mode: v }; setData(next); save(next); }}
-                className={`h-8 px-3 text-xs font-medium ${(data.twilio_voice_mode || "stream") === v ? "bg-primary text-primary-foreground" : "bg-card hover:bg-accent"}`}>{label}</button>
-            ))}
+          <p className="text-xs font-medium mb-1">Real-time AI voice webhook</p>
+          <p className="text-xs text-muted-foreground mb-1.5">Outbound campaign calls use this streaming webhook automatically. To also answer <b>inbound</b> calls with the AI, paste this URL into the Twilio Console → your number → <b>Voice → “A call comes in” (Webhook, HTTP POST)</b>:</p>
+          <div className="flex items-center gap-2">
+            <code data-testid="twilio-webhook-url" className="flex-1 text-xs bg-secondary rounded-sm px-2 py-1.5 overflow-x-auto whitespace-nowrap">{webhookBase}/api/telephony/twilio/relay/incoming</code>
+            <button type="button" data-testid="copy-webhook-button" onClick={() => { navigator.clipboard?.writeText(`${webhookBase}/api/telephony/twilio/relay/incoming`); toast.success("Webhook URL copied"); }}
+              className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent shrink-0">Copy</button>
           </div>
-          <p className="text-xs text-muted-foreground mt-1.5"><b>Real-time streaming</b> (recommended) uses Twilio ConversationRelay for low-latency, interruptible AI you can monitor & take over live — the AI starts speaking on the first word instead of waiting for the full reply. <b>Turn-based</b> is the classic wait-and-respond mode (higher latency).</p>
-          <p className="text-xs text-muted-foreground mt-1">⚡ <b>For sub-1s responses:</b> use Real-time streaming <b>and</b> pick a fast model in the AI Language Model section below — <b>GPT-4o</b> or <b>GPT-4.1-mini</b> reply in ~0.4–0.5s, vs ~1.2s for Claude.</p>
+          <p className="text-xs text-muted-foreground mt-1.5">⚡ <b>For sub-1s responses</b> pick a fast model (<b>GPT-4o</b> / <b>GPT-4.1-mini</b>) in the AI Language Model section below — Claude adds ~1.2s to the first word.</p>
         </div>
         <p className="text-xs text-muted-foreground">Find your <b>Account SID</b> &amp; <b>Auth Token</b> on the <b>Twilio Console dashboard</b>, and buy/verify a number under <b>Phone Numbers</b>. Select <b>Twilio</b> in “Telephony provider” above to make it the active caller.</p>
       </Section>

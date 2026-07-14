@@ -211,7 +211,17 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - ~~T10 Remove AI System Prompt from Org Settings~~ ✅ DONE (user removed; confirmed absent).
 - **Refactor**: split `routes.py` and the large page components (Campaigns.jsx, Leads.jsx) into modules.
 
-## Iteration 19 (2026-07-13) — Live-call latency round 2: enforce streaming + barge-in gather + robust audio
+## Iteration 20 (2026-07-14) — Sub-1s live voice achieved + stable Twilio webhook + turn-based removed
+- **Root cause of remaining latency**: (1) cold-start penalty — the FIRST LLM request per call paid the TLS/connection setup cost (~1.4–4s); (2) 3 sequential DB round-trips on the hot path before the LLM started each turn; (3) unbounded reply length.
+- **Fixes (all in `conversation_relay.py`)**:
+  - **Connection warmup** — on ConversationRelay `setup`, a tiny throwaway LLM request warms the connection pool *while the caller is still hearing the greeting*, so the first real turn is warm.
+  - **Context cached on the WebSocket** — call + org (with system prefix) + transcript loaded ONCE on setup; zero DB reads before the LLM on each turn; transcript persisted off the hot path.
+  - **Brief replies** — `stream_agent_reply(..., brief=True)` instructs one/two short sentences for live calls (fast to generate + speak).
+  - Fixed a Motor `asyncio.create_task` bug (Motor returns a Future here) that was crashing the WS on setup.
+- **Measured (via WS, gpt-4o, realistic greeting delay)**: **first-token 0.48s** on the very first call, ~0.59s after — genuinely sub-1s. (Total caller-stop→AI-speaks ≈ 1–1.5s incl. Twilio's own STT endpointing.)
+- **Turn-based mode removed** — all Twilio calls now use ConversationRelay streaming (`_twilio_webhooks` always returns the relay URL); the Settings voice-mode toggle is gone.
+- **Stable inbound webhook added**: `POST /api/telephony/twilio/relay/incoming` builds an AI call on the fly (org resolved by the dialed number) and connects it to the streaming agent. Surfaced + copyable in Settings → Integrations for pasting into the Twilio Console (Number → Voice → "A call comes in").
+- Verified server-side (warm TTFT, incoming TwiML, streaming chunks, interrupt handling). Live phone audio to confirm on deploy.
 - **Confirmed the streaming WebSocket is reachable through the ingress** (external `wss://…/api/telephony/twilio/relay/ws/{id}` handshake upgrades OK) — so ConversationRelay (sub-1s) is viable here. Calls stuck at ~10s were running the turn-based `<Gather>` fallback.
 - **`<Gather>` fallback heavily optimised** (`twilio_voice.py`): (1) the AI prompt is now nested INSIDE `<Gather>` → the prospect can **barge in / talk over the AI** (natural interruption); (2) TTS uses the fast `eleven_flash_v2_5` model; (3) synthesised audio is stored in **MongoDB (`tts_audio`) instead of in-process memory** and served from there — fixes multi-second Twilio retry delays / 404s on horizontally-scaled deploys (a prime suspect for the 10s); (4) `speechModel="experimental_conversations"` + `actionOnEmptyResult` for snappier, conversational turn-taking; audio is freed on call completion.
 - **Sub-1s recipe (surfaced in Settings)**: use **Real-time streaming** voice mode (default; this is the webhook Twilio connects to for streaming) + a fast model. Measured stream time-to-first-token: GPT-4o ≈0.5s, GPT-4.1-mini ≈0.4s (sub-1s); Claude ≈1.2s.

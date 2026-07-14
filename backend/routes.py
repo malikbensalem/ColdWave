@@ -109,15 +109,11 @@ async def place_outbound_call(integ: dict, destination: str, say_text: str = Non
 
 
 def _twilio_webhooks(call_id: str, integ: dict = None) -> tuple:
-    """Return (voice_url, status_url). Streaming mode uses ConversationRelay (interruptible);
-    gather mode uses the turn-based <Gather> webhook."""
+    """Return (voice_url, status_url). All Twilio AI calls use the ConversationRelay
+    streaming webhook (low-latency, interruptible)."""
     from twilio_voice import public_base_url
     base = public_base_url()
-    mode = (integ or {}).get("twilio_voice_mode", "stream")
-    if mode == "gather":
-        voice = f"{base}/api/telephony/twilio/voice/{call_id}"
-    else:
-        voice = f"{base}/api/telephony/twilio/relay/voice/{call_id}"
+    voice = f"{base}/api/telephony/twilio/relay/voice/{call_id}"
     return (voice, f"{base}/api/telephony/twilio/status/{call_id}")
 
 
