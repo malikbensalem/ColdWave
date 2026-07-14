@@ -391,10 +391,8 @@ async def seed_admin():
             "picture": "",
             "created_at": now_utc().isoformat(),
         })
-    elif not verify_password(admin_password, existing.get("password_hash", "")):
-        await db.users.update_one(
-            {"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}}
-        )
+    # SECURITY: do NOT reset an existing account's password on boot — a password
+    # changed by the customer must persist. Seed only creates the account if absent.
 
 
 async def seed_owner():
@@ -417,7 +415,6 @@ async def seed_owner():
             "created_at": now_utc().isoformat(),
         })
     else:
-        updates = {"role": "owner"}
-        if not verify_password(owner_password, existing.get("password_hash", "")):
-            updates["password_hash"] = hash_password(owner_password)
-        await db.users.update_one({"email": owner_email}, {"$set": updates})
+        # SECURITY: ensure the role is owner, but never reset an existing password on boot.
+        if existing.get("role") != "owner":
+            await db.users.update_one({"email": owner_email}, {"$set": {"role": "owner"}})

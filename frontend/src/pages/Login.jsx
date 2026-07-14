@@ -118,17 +118,6 @@ export default function Login() {
               {mode === "login" ? "Create a workspace" : "Sign in"}
             </button>
           </p>
-
-          {mode === "login" && (
-            <div className="mt-6 space-y-2">
-              <div className="p-3 bg-accent rounded-sm text-xs text-muted-foreground" data-testid="demo-owner-hint">
-                <span className="font-semibold text-foreground">Demo owner:</span> owner@coldwave.ai / Owner123!
-              </div>
-              <div className="p-3 bg-accent rounded-sm text-xs text-muted-foreground" data-testid="demo-admin-hint">
-                <span className="font-semibold text-foreground">Demo admin:</span> admin@coldwave.ai / Admin123!
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

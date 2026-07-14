@@ -80,11 +80,25 @@ app.include_router(build_admin_router(get_current_user, require_owner, record_au
 app.include_router(build_rbac_router(get_current_user, user_can, user_has_cap, record_audit))
 app.include_router(build_email_router(get_current_user, require_admin, record_audit))
 
+def _cors_origins():
+    raw = os.environ.get("CORS_ORIGINS", "").strip()
+    # Ignore a wildcard value: "*" with allow_credentials=True is unsafe (reflects any origin).
+    explicit = [o.strip().rstrip("/") for o in raw.split(",") if o.strip() and o.strip() != "*"]
+    origins = set(explicit) | {"http://localhost:3000", "http://localhost:8001"}
+    try:
+        from twilio_voice import public_base_url
+        base = public_base_url()
+        if base:
+            origins.add(base.rstrip("/"))
+    except Exception:
+        pass
+    return sorted(origins)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=["*"],
-    allow_origin_regex=".*",
+    allow_origins=_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -411,7 +411,6 @@ async def generate_tts(org: dict, voice_id: str, text: str, model: str = None) -
     selection = select_tts_provider(org)
     voice = get_voice(voice_id)
     integ = (org or {}).get("integrations", {})
-    # key = "sk_9a35cfaf46f3cdca52ab0c9d98f6e9375ed54ccaf24a5bca"
     key = integ.get("elevenlabs_api_key") or os.environ.get("ELEVENLABS_API_KEY", "")
 
     if selection["provider"] != "elevenlabs":

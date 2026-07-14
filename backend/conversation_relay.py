@@ -76,7 +76,7 @@ def build_conversation_relay_router():
     router = APIRouter(prefix="/api/telephony/twilio/relay", tags=["twilio-relay"])
 
     @router.api_route("/voice/{call_id}", methods=["GET", "POST"])
-    async def relay_voice(call_id: str):
+    async def relay_voice(call_id: str, request: Request):
         """TwiML for OUTBOUND calls — connects the pre-created call to our WebSocket."""
         call = await db.calls.find_one({"id": call_id}, {"_id": 0})
         if not call:
@@ -84,6 +84,9 @@ def build_conversation_relay_router():
                 content='<?xml version="1.0" encoding="UTF-8"?><Response>'
                         '<Say voice="Polly.Amy">Sorry, this call could not be set up.</Say><Hangup/></Response>',
                 media_type="application/xml")
+        from twilio_voice import validate_twilio_request, twilio_auth_token_for_org
+        if not await validate_twilio_request(request, await twilio_auth_token_for_org(call["org_id"])):
+            return Response(status_code=403)
         await db.calls.update_one({"id": call_id}, {"$set": {"status": "in_progress", "answered_at": _now()}})
         return Response(content=_relay_twiml(call_id, call.get("opening"), call.get("voice_id")),
                         media_type="application/xml")
@@ -92,6 +95,10 @@ def build_conversation_relay_router():
     async def relay_incoming(request: Request):
         """Stable webhook to paste into the Twilio Console (Phone Number → Voice → 'A call comes in').
         Builds an AI call on the fly for INBOUND calls and connects them to the streaming agent."""
+        from twilio_voice import validate_twilio_request, twilio_auth_token_for_org, rate_limited
+        client_ip = (request.client.host if request.client else "") or request.headers.get("x-forwarded-for", "unknown")
+        if rate_limited(f"incoming:{client_ip}", limit=20, window=60):
+            return Response(status_code=429)
         form = await request.form()
         to = (form.get("To") or "").strip()
         frm = (form.get("From") or "").strip()
@@ -101,6 +108,8 @@ def build_conversation_relay_router():
         if not org:
             return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response>'
                             '<Say>Service is not configured.</Say><Hangup/></Response>', media_type="application/xml")
+        if not await validate_twilio_request(request, await twilio_auth_token_for_org(org["id"])):
+            return Response(status_code=403)
         camp = (await db.campaigns.find_one({"org_id": org["id"], "status": "active"}, {"_id": 0})
                 or await db.campaigns.find_one({"org_id": org["id"]}, {"_id": 0}))
         from routes import build_campaign_call_context

@@ -11,7 +11,10 @@ No auth on these routes — Twilio calls them; they are keyed by the (unguessabl
 """
 import os
 import base64
+import hmac
+import hashlib
 import logging
+import time as _time
 from uuid import uuid4
 from datetime import datetime, timezone
 from xml.sax.saxutils import escape
@@ -41,6 +44,69 @@ def public_base_url() -> str:
         except Exception:
             u = ""
     return (u or "").strip().rstrip("/")
+
+
+def twilio_signature_enabled() -> bool:
+    return os.environ.get("TWILIO_VALIDATE_SIGNATURE", "true").lower() in ("1", "true", "yes", "on")
+
+
+def _compute_twilio_sig(auth_token: str, url: str, params: dict) -> str:
+    s = url
+    for k in sorted(params.keys()):
+        s += k + str(params[k])
+    mac = hmac.new(auth_token.encode("utf-8"), s.encode("utf-8"), hashlib.sha1)
+    return base64.b64encode(mac.digest()).decode()
+
+
+async def twilio_auth_token_for_org(org_id: str) -> str:
+    org = await db.organizations.find_one({"id": org_id}, {"_id": 0, "integrations": 1})
+    return ((org or {}).get("integrations", {}) or {}).get("twilio_auth_token", "")
+
+
+async def twilio_auth_token_for_call(call_id: str) -> str:
+    call = await db.calls.find_one({"id": call_id}, {"_id": 0, "org_id": 1})
+    if not call:
+        return ""
+    return await twilio_auth_token_for_org(call["org_id"])
+
+
+async def validate_twilio_request(request, auth_token: str) -> bool:
+    """Verify Twilio's X-Twilio-Signature (HMAC-SHA1 over the public URL + sorted POST params).
+    Fail-OPEN when validation is disabled, no auth token is configured, or on any internal error
+    (never break a legitimate call due to a bug); reject only on a definitive mismatch / missing sig."""
+    if not twilio_signature_enabled():
+        return True
+    try:
+        if not auth_token:
+            return True  # cannot validate (Twilio not fully configured) -> allow
+        sig = request.headers.get("X-Twilio-Signature", "")
+        if not sig:
+            return False
+        url = public_base_url() + request.url.path
+        if request.url.query:
+            url += "?" + request.url.query
+        try:
+            form = await request.form()
+            params = {k: v for k, v in form.items()}
+        except Exception:
+            params = {}
+        expected = _compute_twilio_sig(auth_token, url, params)
+        return hmac.compare_digest(expected, sig)
+    except Exception as e:
+        logger.error(f"twilio signature validate error (fail-open): {e}")
+        return True
+
+
+# In-memory per-IP rate limiter for the public inbound webhook (cost-abuse protection).
+_RATE = {}
+
+
+def rate_limited(key: str, limit: int = 20, window: int = 60) -> bool:
+    now = _time.time()
+    hits = [t for t in _RATE.get(key, []) if now - t < window]
+    hits.append(now)
+    _RATE[key] = hits
+    return len(hits) > limit
 
 
 async def _store_audio(call_id: str, raw: bytes) -> str:
@@ -96,10 +162,12 @@ def build_twilio_voice_router():
         return Response(content=bytes(doc["data"]), media_type="audio/mpeg")
 
     @router.api_route("/voice/{call_id}", methods=["GET", "POST"])
-    async def voice(call_id: str):
+    async def voice(call_id: str, request: Request):
         call = await db.calls.find_one({"id": call_id}, {"_id": 0})
         if not call:
             return _twiml('<Say voice="Polly.Amy">Sorry, this call could not be set up.</Say><Hangup/>')
+        if not await validate_twilio_request(request, await twilio_auth_token_for_org(call["org_id"])):
+            return Response(status_code=403)
         org = await db.organizations.find_one({"id": call["org_id"]}, {"_id": 0})
         opening = call.get("opening") or (call.get("transcript") or [{}])[0].get("content") or "Hello, do you have a quick moment?"
         await db.calls.update_one({"id": call_id}, {"$set": {"status": "in_progress", "answered_at": _now()}})
@@ -111,6 +179,8 @@ def build_twilio_voice_router():
         call = await db.calls.find_one({"id": call_id}, {"_id": 0})
         if not call:
             return _twiml('<Hangup/>')
+        if not await validate_twilio_request(request, await twilio_auth_token_for_org(call["org_id"])):
+            return Response(status_code=403)
         org = await db.organizations.find_one({"id": call["org_id"]}, {"_id": 0})
         form = await request.form()
         said = (form.get("SpeechResult") or "").strip()
@@ -148,6 +218,8 @@ def build_twilio_voice_router():
 
     @router.post("/status/{call_id}")
     async def status_cb(call_id: str, request: Request):
+        if not await validate_twilio_request(request, await twilio_auth_token_for_call(call_id)):
+            return Response(status_code=403)
         form = await request.form()
         cstatus = form.get("CallStatus", "")
         updates = {"provider_status": cstatus, "updated_at": _now()}
