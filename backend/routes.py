@@ -946,7 +946,9 @@ async def list_erasures(user: dict = Depends(get_current_user)):
 # ---------------- Settings: Org ----------------
 @router.get("/settings/org")
 async def get_org(user: dict = Depends(get_current_user)):
-    return await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    # Never expose the `integrations` object (Twilio/ElevenLabs/LLM/O365 secrets) here —
+    # it is available only to admins via GET /settings/integrations.
+    return await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0, "integrations": 0})
 
 
 @router.get("/settings/branding")
@@ -964,7 +966,7 @@ async def update_org(req: OrgUpdateRequest, user: dict = Depends(require_admin))
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     await db.organizations.update_one({"id": user["org_id"]}, {"$set": updates})
     await audit(user["org_id"], user, "org_update", str(list(updates.keys())))
-    return await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    return await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0, "integrations": 0})
 
 
 # ---------------- Settings: Integrations ----------------
