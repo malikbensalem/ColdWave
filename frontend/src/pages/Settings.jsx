@@ -285,7 +285,7 @@ function IntegrationsTab() {
             <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Max reply length</label>
             <select data-testid="llm-max-sentences" value={data.llm_max_sentences ?? 2} onChange={set("llm_max_sentences")}
               className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n} sentence{n > 1 ? "s" : ""}</option>)}
+              {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{`${n} sentence${n > 1 ? "s" : ""}`}</option>)}
             </select>
           </div>
           <Toggle testid="llm-chunking" label="Chunk long replies (natural)" checked={data.llm_chunking ?? true} onChange={set("llm_chunking")} />

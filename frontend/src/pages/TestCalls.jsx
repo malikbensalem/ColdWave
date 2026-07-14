@@ -101,7 +101,7 @@ export default function TestCalls() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Sel label="Campaign (optional)" testid="setup-campaign" value={setup.campaign_id} onChange={(e) => setSetup({ ...setup, campaign_id: e.target.value })} options={campaigns.map((c) => ({ value: c.id, label: c.name }))} />
             <Sel label="Script" testid="setup-script" value={setup.script_id} onChange={(e) => setSetup({ ...setup, script_id: e.target.value })} options={scripts.map((s) => ({ value: s.id, label: s.name }))} />
-            <Sel label="AI Voice" testid="setup-voice" value={setup.voice_id} onChange={(e) => setSetup({ ...setup, voice_id: e.target.value })} options={[{ value: "", label: "No voice (text only)" }, ...voices.map((v) => ({ value: v.id, label: `${v.name} (${v.gender}, ${v.accent})` }))]} />
+            <Sel label="AI Voice" testid="setup-voice" noBlank value={setup.voice_id} onChange={(e) => setSetup({ ...setup, voice_id: e.target.value })} options={[{ value: "", label: "No voice (text only)" }, ...voices.map((v) => ({ value: v.id, label: `${v.name} (${v.gender}, ${v.accent})` }))]} />
             <Sel label="Link to lead (optional)" testid="setup-contact" value={setup.contact_id} onChange={(e) => setSetup({ ...setup, contact_id: e.target.value })} options={contacts.map((c) => ({ value: c.id, label: `${c.name} — ${c.company}` }))} />
           </div>
           <p className="text-xs text-muted-foreground" data-testid="setup-voice-hint">Pick <b>No voice</b> to test by text only. The AI language model is set in <b>Settings → AI Language Model</b>.</p>
@@ -174,6 +174,6 @@ export default function TestCalls() {
   );
 }
 
-function Sel({ label, testid, options, ...rest }) {
-  return <div><label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">{label}</label><select data-testid={testid} {...rest} className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><option value="">— none —</option>{options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>;
+function Sel({ label, testid, options, noBlank, ...rest }) {
+  return <div><label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">{label}</label><select data-testid={testid} {...rest} className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{!noBlank && <option value="">— none —</option>}{options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>;
 }

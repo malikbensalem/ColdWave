@@ -211,7 +211,13 @@ Multi-tenant SaaS for AI cold calling with male/female AI voices, 3CX integratio
 - ~~T10 Remove AI System Prompt from Org Settings~~ ✅ DONE (user removed; confirmed absent).
 - **Refactor**: split `routes.py` and the large page components (Campaigns.jsx, Leads.jsx) into modules.
 
-## Iteration 20 (2026-07-14) — Sub-1s live voice achieved + stable Twilio webhook + turn-based removed
+## Iteration 21 (2026-07-14) — Tunable EL/LLM params, natural chunking, voice-optional test calls, listen-in on Call
+- **Tunable parameters in Settings → Integrations** (persist + merge-safe): **ElevenLabs** TTS model (Flash/Turbo/Multilingual) + stability, similarity, style, speed sliders; **LLM** model, temperature slider, max reply length (1–4 sentences), and sentence-chunking toggle. `generate_tts` re-enabled `VoiceSettings` (was commented out); `_chat`/`stream_agent_reply` apply temperature via `with_params`.
+- **Natural chunking of long replies**: ConversationRelay buffers streamed tokens into complete sentences before sending to Twilio TTS (verified: a "tell me everything" prompt returned 2 clean sentences, capped by max_sentences). Toggle via `llm_chunking`.
+- **ElevenLabs credit auto-shown**: Settings balances now auto-load on open (no button click); shows EL characters left + Twilio balance when keys set, 3CX/LLM informational.
+- **Voice-optional test calls**: Test Calls voice dropdown has **'No voice (text only)'** (first, no phantom blank option); starting with no voice runs text-only; the **AI model in use is shown** in diagnostics (from start response `llm_model`).
+- **Live Calls page removed**; folded into the Call action: pressing **Call** on a lead shows a **'Listen in'** checkbox → opens a `CallMonitor` dialog with the real-time transcript + a **'Take over'** button (intentionally not wired yet — shows an info toast).
+- Verified: iteration_16.json — **frontend E2E 100%** incl. the merge regression (twilio_account_sid preserved); backend params/chunking/model-display curl+WS-verified. Fixed 2 minor polish items (duplicate empty option, `<option>` child warning) post-report.
 - **Root cause of remaining latency**: (1) cold-start penalty — the FIRST LLM request per call paid the TLS/connection setup cost (~1.4–4s); (2) 3 sequential DB round-trips on the hot path before the LLM started each turn; (3) unbounded reply length.
 - **Fixes (all in `conversation_relay.py`)**:
   - **Connection warmup** — on ConversationRelay `setup`, a tiny throwaway LLM request warms the connection pool *while the caller is still hearing the greeting*, so the first real turn is warm.
