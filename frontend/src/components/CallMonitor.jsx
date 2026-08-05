@@ -1,8 +1,8 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { toast } from "sonner";
-import api from "../lib/api";
+import api, { apiErr } from "../lib/api";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Broadcast, PhoneX, UserSwitch, Robot, User } from "@phosphor-icons/react";
+import { Broadcast, PhoneX, UserSwitch, Robot, User, Voicemail } from "@phosphor-icons/react";
 
 const TONE = {
   ringing: "bg-amber-100 text-amber-700", initiating: "bg-amber-100 text-amber-700",
@@ -12,8 +12,9 @@ const TONE = {
 };
 
 // Live call monitor: real-time transcript + one-click take-over (take-over not yet wired).
-export function CallMonitor({ callId, onClose }) {
+export function CallMonitor({ callId, onClose, onEnded }) {
   const [detail, setDetail] = useState(null);
+  const [ending, setEnding] = useState(false);
   const bottomRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -31,6 +32,19 @@ export function CallMonitor({ callId, onClose }) {
 
   const takeover = () => toast.info("Human take-over is coming soon — this button is not wired up yet.");
 
+  const endCall = async () => {
+    setEnding(true);
+    try {
+      await api.post(`/calls/${callId}/hangup`);
+      toast.success("Call ended");
+      onEnded?.();
+      onClose?.();
+    } catch (e) { toast.error(apiErr(e, "Could not end the call.")); }
+    finally { setEnding(false); }
+  };
+
+  const isVoicemail = !!detail?.voicemail;
+
   return (
     <Dialog open={!!callId} onOpenChange={(o) => !o && onClose?.()}>
       <DialogContent className="max-w-2xl" data-testid="call-monitor-dialog">
@@ -38,6 +52,7 @@ export function CallMonitor({ callId, onClose }) {
           <DialogTitle className="font-display flex items-center gap-2">
             <Broadcast size={20} weight="fill" className="text-primary" /> Listening in
             {detail && <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium capitalize ${TONE[detail.status] || "bg-secondary text-secondary-foreground"}`}>{String(detail.status || "").replace(/[-_]/g, " ")}</span>}
+            {isVoicemail && <span data-testid="voicemail-badge" className="px-2 py-0.5 rounded-full text-[11px] font-semibold inline-flex items-center gap-1 bg-orange-100 text-orange-700"><Voicemail size={13} weight="fill" /> Voicemail</span>}
           </DialogTitle>
         </DialogHeader>
         <div className="text-xs text-muted-foreground -mt-1">
@@ -64,12 +79,16 @@ export function CallMonitor({ callId, onClose }) {
         </div>
         <div className="flex items-center justify-end gap-2">
           <button data-testid="monitor-takeover-button" onClick={takeover}
-            className="h-9 px-3 rounded-sm bg-primary text-primary-foreground text-sm font-medium inline-flex items-center gap-1.5">
+            className="h-9 px-3 rounded-sm border border-border text-sm font-medium hover:bg-accent inline-flex items-center gap-1.5">
             <UserSwitch size={16} /> Take over <span className="text-[10px] opacity-75">(soon)</span>
+          </button>
+          <button data-testid="monitor-end-call-button" onClick={endCall} disabled={ending}
+            className="h-9 px-3 rounded-sm bg-destructive text-destructive-foreground text-sm font-medium hover:opacity-90 disabled:opacity-50 inline-flex items-center gap-1.5">
+            <PhoneX size={16} weight="fill" /> {ending ? "Ending…" : "End call"}
           </button>
           <button data-testid="monitor-close-button" onClick={onClose}
             className="h-9 px-3 rounded-sm border border-border text-sm font-medium hover:bg-accent inline-flex items-center gap-1.5">
-            <PhoneX size={16} /> Stop listening
+            Stop listening
           </button>
         </div>
       </DialogContent>

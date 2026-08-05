@@ -244,4 +244,39 @@ def build_twilio_voice_router():
         await db.calls.update_one({"id": call_id}, {"$set": updates})
         return Response(status_code=204)
 
+    @router.post("/amd/{call_id}")
+    async def amd_cb(call_id: str, request: Request):
+        """Async Answering Machine Detection result. When Twilio reports the call was answered
+        by a machine/voicemail, we tag the call and end it automatically."""
+        if not await validate_twilio_request(request, await twilio_auth_token_for_call(call_id)):
+            return Response(status_code=403)
+        form = await request.form()
+        answered_by = (form.get("AnsweredBy") or "").strip()
+        call = await db.calls.find_one({"id": call_id}, {"_id": 0})
+        if not call:
+            return Response(status_code=204)
+        updates = {"answered_by": answered_by, "updated_at": _now()}
+        is_machine = answered_by.startswith("machine") or answered_by == "fax"
+        if is_machine:
+            tx = call.get("transcript", []) or []
+            tx.append({"role": "system",
+                       "content": f"Voicemail / answering machine detected ({answered_by}) — call ended automatically.",
+                       "ts": _now()})
+            updates.update({"voicemail": True, "outcome": "voicemail", "status": "completed", "transcript": tx})
+            sid = call.get("provider_call_sid") or call.get("callid")
+            if call.get("provider") == "twilio" and sid:
+                org = await db.organizations.find_one({"id": call["org_id"]}, {"_id": 0})
+                integ = (org or {}).get("integrations", {})
+                try:
+                    from telephony import twilio_hangup_call
+                    await twilio_hangup_call(integ, sid)
+                except Exception as e:
+                    logger.error(f"AMD auto-hangup failed for {call_id}: {e}")
+            try:
+                await db.tts_audio.delete_many({"call_id": call_id})
+            except Exception:
+                pass
+        await db.calls.update_one({"id": call_id}, {"$set": updates})
+        return Response(status_code=204)
+
     return router

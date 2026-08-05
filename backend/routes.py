@@ -85,7 +85,7 @@ async def build_campaign_call_context(org: dict, campaign: dict) -> dict:
 
 
 async def place_outbound_call(integ: dict, destination: str, say_text: str = None,
-                              voice_url: str = None, status_url: str = None) -> dict:
+                              voice_url: str = None, status_url: str = None, amd_url: str = None) -> dict:
     """Route an outbound call to the tenant's selected provider (3CX or Twilio).
     Returns {result, provider, extension}. Raises HTTPException with a clear message."""
     provider = (integ.get("telephony_provider") or "3cx").lower()
@@ -93,7 +93,7 @@ async def place_outbound_call(integ: dict, destination: str, say_text: str = Non
         if not integ.get("twilio_enabled"):
             raise HTTPException(400, "Twilio is selected but not enabled. Enable Twilio in Settings → Integrations.")
         try:
-            result = await telephony_twilio_call(integ, destination, say_text, voice_url=voice_url, status_url=status_url)
+            result = await telephony_twilio_call(integ, destination, say_text, voice_url=voice_url, status_url=status_url, amd_url=amd_url)
         except (ValueError, RuntimeError) as e:
             raise HTTPException(400, str(e))
         except Exception as e:
@@ -112,12 +112,13 @@ async def place_outbound_call(integ: dict, destination: str, say_text: str = Non
 
 
 def _twilio_webhooks(call_id: str, integ: dict = None) -> tuple:
-    """Return (voice_url, status_url). All Twilio AI calls use the ConversationRelay
+    """Return (voice_url, status_url, amd_url). All Twilio AI calls use the ConversationRelay
     streaming webhook (low-latency, interruptible)."""
     from twilio_voice import public_base_url
     base = public_base_url()
     voice = f"{base}/api/telephony/twilio/relay/voice/{call_id}"
-    return (voice, f"{base}/api/telephony/twilio/status/{call_id}")
+    return (voice, f"{base}/api/telephony/twilio/status/{call_id}",
+            f"{base}/api/telephony/twilio/amd/{call_id}")
 
 
 async def attach_system_prefix(org: dict, channel: str = "call") -> dict:
@@ -641,15 +642,16 @@ async def campaign_dial_next(campaign_id: str, user: dict = Depends(require_perm
     }
     await db.calls.insert_one(dict(call_doc))
 
-    voice_url, status_url = (_twilio_webhooks(call_id, integ) if provider == "twilio" else (None, None))
+    voice_url, status_url, amd_url = (_twilio_webhooks(call_id, integ) if provider == "twilio" else (None, None, None))
     try:
-        call = await place_outbound_call(integ, contact["phone"], say_text=ctx["opening"], voice_url=voice_url, status_url=status_url)
+        call = await place_outbound_call(integ, contact["phone"], say_text=ctx["opening"], voice_url=voice_url, status_url=status_url, amd_url=amd_url)
     except HTTPException:
         await db.calls.delete_one({"id": call_id})
         raise
     result = call["result"]
     await db.calls.update_one({"id": call_id}, {"$set": {
-        "extension": call["extension"], "callid": result.get("callid"), "status": result.get("status", "Initiated")}})
+        "extension": call["extension"], "callid": result.get("callid"),
+        "provider_call_sid": result.get("callid"), "status": result.get("status", "Initiated")}})
     if contact.get("status") in (None, "new"):
         await db.contacts.update_one({"id": contact["id"], "org_id": user["org_id"]}, {"$set": {"status": "contacted"}})
     if camp.get("status") == "draft":
@@ -955,7 +957,8 @@ async def takeover_call(call_id: str, req: TakeoverRequest, user: dict = Depends
     call = await db.calls.find_one({"id": call_id, "org_id": user["org_id"]}, {"_id": 0})
     if not call:
         raise HTTPException(404, "Call not found")
-    if call.get("provider") != "twilio" or not call.get("provider_call_sid"):
+    sid = call.get("provider_call_sid") or call.get("callid")
+    if call.get("provider") != "twilio" or not sid:
         raise HTTPException(400, "Live takeover is available only on active Twilio streaming calls.")
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
     integ = (org or {}).get("integrations", {})
@@ -966,7 +969,7 @@ async def takeover_call(call_id: str, req: TakeoverRequest, user: dict = Depends
     twiml = (f'<Response><Say voice="Polly.Amy" language="en-GB">Please hold, connecting you now.</Say>'
              f'<Dial>{_esc(human)}</Dial></Response>')
     try:
-        await twilio_update_call(integ, call["provider_call_sid"], twiml)
+        await twilio_update_call(integ, sid, twiml)
     except (ValueError, RuntimeError) as e:
         raise HTTPException(400, str(e))
     except Exception as e:
@@ -985,12 +988,13 @@ async def hangup_call(call_id: str, user: dict = Depends(require_perm("leads", "
     call = await db.calls.find_one({"id": call_id, "org_id": user["org_id"]}, {"_id": 0})
     if not call:
         raise HTTPException(404, "Call not found")
-    if call.get("provider") != "twilio" or not call.get("provider_call_sid"):
+    sid = call.get("provider_call_sid") or call.get("callid")
+    if call.get("provider") != "twilio" or not sid:
         raise HTTPException(400, "Ending a live call is available only on active Twilio calls.")
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
     integ = (org or {}).get("integrations", {})
     try:
-        await twilio_hangup_call(integ, call["provider_call_sid"])
+        await twilio_hangup_call(integ, sid)
     except (ValueError, RuntimeError) as e:
         raise HTTPException(400, str(e))
     except Exception as e:
@@ -1265,15 +1269,16 @@ async def dial_contact(req: DialRequest, user: dict = Depends(require_perm("lead
     await db.calls.insert_one(dict(call_doc))
 
     # For Twilio, drive the call through the AI voice webhook (campaign voice + script + blueprint).
-    voice_url, status_url = (_twilio_webhooks(call_id, integ) if provider == "twilio" else (None, None))
+    voice_url, status_url, amd_url = (_twilio_webhooks(call_id, integ) if provider == "twilio" else (None, None, None))
     try:
-        call = await place_outbound_call(integ, destination, say_text=ctx["opening"], voice_url=voice_url, status_url=status_url)
+        call = await place_outbound_call(integ, destination, say_text=ctx["opening"], voice_url=voice_url, status_url=status_url, amd_url=amd_url)
     except HTTPException:
         await db.calls.delete_one({"id": call_id})
         raise
     result = call["result"]
     await db.calls.update_one({"id": call_id}, {"$set": {
-        "extension": call["extension"], "callid": result.get("callid"), "status": result.get("status", "Initiated")}})
+        "extension": call["extension"], "callid": result.get("callid"),
+        "provider_call_sid": result.get("callid"), "status": result.get("status", "Initiated")}})
     if contact and contact.get("status") in (None, "new"):
         await db.contacts.update_one({"id": contact["id"], "org_id": user["org_id"]}, {"$set": {"status": "contacted"}})
     await audit(user["org_id"], user, "manual_call", destination, entity="contact", entity_id=req.contact_id)

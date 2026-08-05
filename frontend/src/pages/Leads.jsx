@@ -346,6 +346,7 @@ export default function Leads() {
                           <div className="text-muted-foreground mt-0.5">{fmtDate(c.created_at)}</div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
+                          {c.voicemail && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-orange-100 text-orange-700">Voicemail</span>}
                           <RatingBadge value={c.rating} />
                           <SentimentBadge sentiment={c.sentiment} />
                         </div>
@@ -412,7 +413,7 @@ export default function Leads() {
         </DialogContent>
       </Dialog>
 
-      <CallMonitor callId={monitorCallId} onClose={() => setMonitorCallId(null)} />
+      <CallMonitor callId={monitorCallId} onClose={() => setMonitorCallId(null)} onEnded={load} />
 
       {/* Summary / Transcript viewer */}
       <Dialog open={!!viewer} onOpenChange={(o) => !o && setViewer(null)}>

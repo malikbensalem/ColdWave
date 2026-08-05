@@ -153,7 +153,7 @@ async def make_call(integ: dict, destination: str) -> dict:
 
 
 async def twilio_make_call(integ: dict, destination: str, say_text: str = None,
-                           voice_url: str = None, status_url: str = None) -> dict:
+                           voice_url: str = None, status_url: str = None, amd_url: str = None) -> dict:
     """Originate a real outbound call via Twilio Programmable Voice.
     If `voice_url` is given, Twilio fetches TwiML from that webhook (runs the turn-based AI
     conversation in the campaign voice). Otherwise it speaks `say_text` via inline TwiML."""
@@ -174,6 +174,13 @@ async def twilio_make_call(integ: dict, destination: str, say_text: str = None,
             data["StatusCallback"] = status_url
             data["StatusCallbackEvent"] = "completed"
             data["StatusCallbackMethod"] = "POST"
+        if amd_url:
+            # Async Answering Machine Detection: connects humans immediately (no added latency);
+            # Twilio posts the result (AnsweredBy) to amd_url so we can end voicemail calls + tag them.
+            data["MachineDetection"] = "Enable"
+            data["AsyncAmd"] = "true"
+            data["AsyncAmdStatusCallback"] = amd_url
+            data["AsyncAmdStatusCallbackMethod"] = "POST"
     else:
         say = say_text or "Hello, this is an automated call from your A I assistant. Please hold a moment."
         data["Twiml"] = f'<Response><Say voice="Polly.Amy">{escape(say)}</Say><Pause length="3"/></Response>'
