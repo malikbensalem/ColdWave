@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import csv
 import io
 import re
@@ -582,6 +583,7 @@ async def campaign_queue(campaign_id: str, user: dict = Depends(get_current_user
             "phone": (contact or {}).get("phone", ""), "company": (contact or {}).get("company", ""),
             "rating": enriched.get("rating"), "sentiment": cl.get("sentiment"),
             "summary": enriched.get("summary"), "status": cl.get("status"), "called_at": cl.get("created_at"),
+            "outcome": cl.get("outcome"), "voicemail": bool(cl.get("voicemail")),
         })
 
     # Upcoming: audience-matched (or the campaign's specific clients) not yet called; skip opted-out/DNC.
@@ -659,8 +661,114 @@ async def campaign_dial_next(campaign_id: str, user: dict = Depends(require_perm
     await audit(user["org_id"], user, "campaign_dial", contact["phone"], entity="campaign", entity_id=campaign_id)
     call_doc.pop("_id", None)
     return {"ok": True, "dialed": {"name": contact["name"], "phone": contact["phone"]},
-            "callid": result.get("callid"), "status": result.get("status"),
+            "call_id": call_id, "callid": result.get("callid"), "status": result.get("status"),
             "remaining": queue.get("upcoming_count", 0) - 1}
+
+
+# ---------------- Campaign auto-dialer ----------------
+_auto_dial_tasks = {}  # campaign_id -> asyncio.Task
+
+
+async def _set_auto_dial(campaign_id: str, org_id: str, active: bool, reason: str = ""):
+    await db.campaigns.update_one({"id": campaign_id, "org_id": org_id}, {"$set": {
+        "auto_dial": {"active": active, "reason": reason, "updated_at": now_utc().isoformat()}}})
+
+
+async def _wait_for_call_end(call_id: str, timeout: int = 200) -> str:
+    """Poll a call until it reaches a terminal state (or timeout)."""
+    terminal = {"completed", "no_answer", "failed", "busy", "canceled"}
+    waited = 0
+    while waited < timeout:
+        await asyncio.sleep(3)
+        waited += 3
+        c = await db.calls.find_one({"id": call_id}, {"_id": 0, "status": 1, "analysis": 1, "voicemail": 1})
+        if not c:
+            return "gone"
+        st = (c.get("status") or "").lower()
+        if st in terminal or c.get("analysis") or c.get("voicemail"):
+            return st or "completed"
+    return "timeout"
+
+
+async def _auto_dial_loop(org_id: str, campaign_id: str, user: dict, pause: int = 4):
+    logger.info(f"auto-dial START campaign={campaign_id}")
+    try:
+        while True:
+            camp = await db.campaigns.find_one({"id": campaign_id, "org_id": org_id}, {"_id": 0})
+            if not camp or not (camp.get("auto_dial") or {}).get("active"):
+                break
+            org = await db.organizations.find_one({"id": org_id}, {"_id": 0})
+            if not within_calling_hours(org or {}).get("allowed", True):
+                await _set_auto_dial(campaign_id, org_id, False, "Paused — outside calling hours.")
+                break
+            queue = await campaign_queue(campaign_id, user)
+            if not queue.get("next"):
+                await _set_auto_dial(campaign_id, org_id, False, "Finished — no more contacts in the queue.")
+                break
+            try:
+                res = await campaign_dial_next(campaign_id, user)
+            except HTTPException as e:
+                await _set_auto_dial(campaign_id, org_id, False, f"Stopped: {e.detail}")
+                break
+            except Exception as e:
+                await _set_auto_dial(campaign_id, org_id, False, f"Stopped: {str(e)[:120]}")
+                break
+            call_id = res.get("call_id")
+            if call_id:
+                await _wait_for_call_end(call_id)
+            await asyncio.sleep(pause)
+    finally:
+        _auto_dial_tasks.pop(campaign_id, None)
+        logger.info(f"auto-dial END campaign={campaign_id}")
+
+
+@router.post("/campaigns/{campaign_id}/auto-dial/start")
+async def auto_dial_start(campaign_id: str, user: dict = Depends(require_perm("leads", "read"))):
+    camp = await db.campaigns.find_one({"id": campaign_id, "org_id": user["org_id"]}, {"_id": 0})
+    if not camp:
+        raise HTTPException(404, "Campaign not found")
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    integ = (org or {}).get("integrations", {})
+    provider = (integ.get("telephony_provider") or "3cx").lower()
+    if provider == "twilio" and not integ.get("twilio_enabled"):
+        raise HTTPException(400, "Twilio is selected but not enabled. Enable it in Settings → Integrations.")
+    if provider == "3cx" and not integ.get("tcx_enabled"):
+        raise HTTPException(400, "3CX live calling is not enabled. Configure it in Settings → Integrations.")
+    if not within_calling_hours(org or {}).get("allowed", True):
+        raise HTTPException(400, "Outside your configured calling hours — auto-dial can't start right now.")
+    queue = await campaign_queue(campaign_id, user)
+    if not queue.get("next"):
+        raise HTTPException(400, "The campaign queue is empty — nothing to auto-dial.")
+    if campaign_id in _auto_dial_tasks and not _auto_dial_tasks[campaign_id].done():
+        return {"ok": True, "already_running": True}
+    await _set_auto_dial(campaign_id, user["org_id"], True, "Auto-dialing…")
+    # Minimal user context needed by the loop's helper calls.
+    uctx = {"id": user["id"], "org_id": user["org_id"], "email": user["email"]}
+    _auto_dial_tasks[campaign_id] = asyncio.create_task(_auto_dial_loop(user["org_id"], campaign_id, uctx))
+    await audit(user["org_id"], user, "auto_dial_start", "", entity="campaign", entity_id=campaign_id)
+    return {"ok": True, "queued": queue.get("upcoming_count", 0)}
+
+
+@router.post("/campaigns/{campaign_id}/auto-dial/stop")
+async def auto_dial_stop(campaign_id: str, user: dict = Depends(require_perm("leads", "read"))):
+    await _set_auto_dial(campaign_id, user["org_id"], False, "Stopped by user.")
+    t = _auto_dial_tasks.get(campaign_id)
+    if t and not t.done():
+        t.cancel()
+    await audit(user["org_id"], user, "auto_dial_stop", "", entity="campaign", entity_id=campaign_id)
+    return {"ok": True}
+
+
+@router.get("/campaigns/{campaign_id}/auto-dial/status")
+async def auto_dial_status(campaign_id: str, user: dict = Depends(get_current_user)):
+    camp = await db.campaigns.find_one({"id": campaign_id, "org_id": user["org_id"]}, {"_id": 0, "auto_dial": 1})
+    if camp is None:
+        raise HTTPException(404, "Campaign not found")
+    state = camp.get("auto_dial") or {"active": False}
+    queue = await campaign_queue(campaign_id, user)
+    return {"active": bool(state.get("active")), "reason": state.get("reason", ""),
+            "upcoming_count": queue.get("upcoming_count", 0), "contacted_count": queue.get("contacted_count", 0),
+            "next": queue.get("next")}
 
 
 # ---------------- Voices ----------------

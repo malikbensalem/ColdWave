@@ -230,6 +230,8 @@ function CampaignQueue({ campaign, onClose, onChanged }) {
   const [data, setData] = useState(null);
   const [dialing, setDialing] = useState(false);
   const [tab, setTab] = useState("upcoming");
+  const [auto, setAuto] = useState(null);
+  const [autoBusy, setAutoBusy] = useState(false);
 
   const load = useCallback(async () => {
     if (!campaign) return;
@@ -237,6 +239,18 @@ function CampaignQueue({ campaign, onClose, onChanged }) {
     setData(data);
   }, [campaign]);
   useEffect(() => { load(); }, [load]);
+
+  const loadAuto = useCallback(async () => {
+    if (!campaign) return;
+    try { const { data } = await api.get(`/campaigns/${campaign.id}/auto-dial/status`); setAuto(data); }
+    catch (e) { /* ignore */ }
+  }, [campaign]);
+  useEffect(() => {
+    if (!campaign) return;
+    loadAuto();
+    const t = setInterval(() => { loadAuto(); load(); }, 3000);
+    return () => clearInterval(t);
+  }, [campaign, loadAuto, load]);
 
   const dialNext = async () => {
     setDialing(true);
@@ -247,6 +261,21 @@ function CampaignQueue({ campaign, onClose, onChanged }) {
       onChanged?.();
     } catch (err) { toast.error(apiErr(err)); }
     finally { setDialing(false); }
+  };
+
+  const toggleAuto = async () => {
+    setAutoBusy(true);
+    try {
+      if (auto?.active) {
+        await api.post(`/campaigns/${campaign.id}/auto-dial/stop`);
+        toast.success("Auto-dial stopped.");
+      } else {
+        const { data: res } = await api.post(`/campaigns/${campaign.id}/auto-dial/start`);
+        toast.success(res.already_running ? "Auto-dial is already running." : `Auto-dial started — ${res.queued} in queue.`);
+      }
+      await loadAuto();
+    } catch (err) { toast.error(apiErr(err)); }
+    finally { setAutoBusy(false); }
   };
 
   return (
@@ -261,12 +290,30 @@ function CampaignQueue({ campaign, onClose, onChanged }) {
                 <div className="bg-secondary/50 rounded-sm p-3"><div className="text-2xl font-bold tnum">{data.upcoming_count}</div><div className="text-xs text-muted-foreground">Upcoming</div></div>
               </div>
 
+              <div className={`rounded-sm p-3 border ${auto?.active ? "border-primary bg-primary/5" : "border-border bg-card"}`} data-testid="auto-dial-panel">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold flex items-center gap-2">
+                      {auto?.active && <span className="relative flex h-2.5 w-2.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" /><span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary" /></span>}
+                      Auto-dial mode
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      {auto?.active ? (auto?.reason || "Auto-dialing the queue…") : "Automatically dial and let the AI talk to each lead, one after another."}
+                    </div>
+                  </div>
+                  <button data-testid="auto-dial-toggle" onClick={toggleAuto} disabled={autoBusy}
+                    className={`shrink-0 inline-flex items-center gap-1.5 h-9 px-4 rounded-sm text-sm font-medium disabled:opacity-50 ${auto?.active ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground"} hover:opacity-90`}>
+                    <PhoneCall size={15} weight="fill" /> {autoBusy ? "…" : auto?.active ? "Stop auto-dial" : "Start auto-dial"}
+                  </button>
+                </div>
+              </div>
+
               <div className="border border-border rounded-sm p-3 bg-card">
                 <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-1">Next in queue</div>
                 {data.next ? (
                   <div className="flex items-center justify-between">
                     <div><div className="font-medium">{data.next.name}</div><div className="text-xs text-muted-foreground tnum">{data.next.phone} · {data.next.company || "—"}</div></div>
-                    <button data-testid="campaign-dial-next" onClick={dialNext} disabled={dialing}
+                    <button data-testid="campaign-dial-next" onClick={dialNext} disabled={dialing || auto?.active}
                       className="inline-flex items-center gap-1.5 h-9 px-4 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 disabled:opacity-50">
                       <PhoneCall size={15} weight="fill" /> {dialing ? "Dialing…" : "Dial next"}
                     </button>
@@ -294,9 +341,11 @@ function CampaignQueue({ campaign, onClose, onChanged }) {
                     <div key={c.contact_id} className="border border-border rounded-sm px-3 py-2 text-sm">
                       <div className="flex items-center justify-between">
                         <span className="font-medium">{c.name}</span>
-                        {c.rating != null && <span className="inline-flex items-center gap-1 text-xs font-semibold tnum text-success"><Star size={12} weight="fill" />{c.rating}</span>}
+                        {c.status === "no_answer"
+                          ? <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${c.voicemail ? "bg-orange-100 text-orange-700" : "bg-secondary text-muted-foreground"}`}>{c.voicemail ? "Voicemail" : "No answer"}</span>
+                          : (c.rating != null && <span className="inline-flex items-center gap-1 text-xs font-semibold tnum text-success"><Star size={12} weight="fill" />{c.rating}</span>)}
                       </div>
-                      <div className="text-xs text-muted-foreground mt-0.5">{c.summary || c.status || "—"}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">{c.status === "no_answer" ? (c.voicemail ? "Went to voicemail — not rated." : "Not answered — not rated.") : (c.summary || c.status || "—")}</div>
                     </div>
                   )) : <div className="text-sm text-muted-foreground">No calls logged yet.</div>}
                 </div>

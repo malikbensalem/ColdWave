@@ -191,7 +191,18 @@ def build_conversation_relay_router():
             await db.calls.update_one({"id": call_id}, {"$set": {"transcript": list(ctx["transcript"])}})
 
         async def _finalise():
-            tx = "\n".join([f"{m['role']}: {m['content']}" for m in ctx["transcript"]])
+            transcript = list(ctx["transcript"])
+            call = await db.calls.find_one({"id": call_id}, {"_id": 0}) or ctx["call"] or {}
+            answered = any(m.get("role") == "prospect" for m in transcript)
+            is_vm = bool(call.get("voicemail"))
+            # Do NOT rate calls that were never answered or went to voicemail.
+            if is_vm or not answered:
+                await db.calls.update_one({"id": call_id}, {"$set": {
+                    "status": "no_answer",
+                    "outcome": "voicemail" if is_vm else "no_answer",
+                    "transcript": transcript}})
+                return
+            tx = "\n".join([f"{m['role']}: {m['content']}" for m in transcript])
             if not tx.strip():
                 return
             org = ctx["org"] or await db.organizations.find_one({"id": (ctx["call"] or {}).get("org_id")}, {"_id": 0})
@@ -200,7 +211,8 @@ def build_conversation_relay_router():
                 await db.calls.update_one({"id": call_id}, {"$set": {
                     "analysis": analysis, "summary": analysis.get("summary"),
                     "sentiment": analysis.get("sentiment"), "rating": analysis.get("score"),
-                    "transcript": list(ctx["transcript"])}})
+                    "status": "completed", "outcome": "answered",
+                    "transcript": transcript}})
             except Exception as e:
                 logger.error(f"relay finalise analyze failed: {e}")
 

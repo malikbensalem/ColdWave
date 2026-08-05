@@ -347,6 +347,7 @@ export default function Leads() {
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           {c.voicemail && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-orange-100 text-orange-700">Voicemail</span>}
+                          {!c.voicemail && c.status === "no_answer" && <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-secondary text-muted-foreground">No answer</span>}
                           <RatingBadge value={c.rating} />
                           <SentimentBadge sentiment={c.sentiment} />
                         </div>
