@@ -60,6 +60,14 @@ def _cr_eleven_model(integ: dict) -> str:
     return m if m in _CR_ELEVEN_MODELS else "flash_v2_5"
 
 
+def _fmt_num(x: float) -> str:
+    """ConversationRelay requires decimal floats (e.g. '1.0', not '1') or it rejects with 64101."""
+    s = f"{float(x):g}"
+    if "." not in s:
+        s += ".0"
+    return s
+
+
 def _relay_tts(org: dict, voice_id: str):
     """Resolve (ttsProvider, voice_string, extra_attrs) for <ConversationRelay>.
 
@@ -76,7 +84,7 @@ def _relay_tts(org: dict, voice_id: str):
         speed = max(0.7, min(1.2, float(vc.get("speed", integ.get("elevenlabs_speed", 1.0)))))
         stability = max(0.0, min(1.0, float(vc.get("stability", integ.get("elevenlabs_stability", 0.5)))))
         similarity = max(0.0, min(1.0, float(integ.get("elevenlabs_similarity", 0.75))))
-        voice_str = f"{el_voice}-{model}-{speed:g}_{stability:g}_{similarity:g}"
+        voice_str = f"{el_voice}-{model}-{_fmt_num(speed)}_{_fmt_num(stability)}_{_fmt_num(similarity)}"
         logger.info(f"ConversationRelay TTS -> ElevenLabs voice={voice_id} ({voice_str})")
         return "ElevenLabs", voice_str, 'elevenlabsTextNormalization="on" '
     gender = (v or {}).get("gender", "female")
