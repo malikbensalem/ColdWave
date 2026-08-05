@@ -26,7 +26,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import Response
 from database import db
 from models import new_id
-from integrations import stream_agent_reply, analyze_transcript, get_voice
+from integrations import stream_agent_reply, analyze_transcript, get_voice, select_tts_provider
 
 logger = logging.getLogger("conversation_relay")
 
@@ -35,8 +35,10 @@ CLOSE_HINTS = ("goodbye", "bye for now", "have a great day", "take care", "remov
 OPTOUT_HINTS = ("not interested", "opt out", "stop calling", "do not call", "remove me")
 _SENTENCE_END = re.compile(r'[.!?…]+["\')\]]*(\s|$)')
 
-# Google en-GB voices for Twilio's built-in TTS (no extra account config needed).
+# Google en-GB voices for Twilio's built-in TTS (fallback when ElevenLabs isn't configured).
 _VOICE_BY_GENDER = {"male": "en-GB-Standard-B", "female": "en-GB-Standard-A"}
+# ConversationRelay-supported ElevenLabs model ids (our stored ids are prefixed with 'eleven_').
+_CR_ELEVEN_MODELS = {"flash_v2", "flash_v2_5", "turbo_v2", "turbo_v2_5"}
 
 
 def _now():
@@ -53,20 +55,44 @@ def public_ws_url() -> str:
     return base
 
 
-def _relay_voice(voice_id: str) -> str:
+def _cr_eleven_model(integ: dict) -> str:
+    m = (integ.get("elevenlabs_model") or "").replace("eleven_", "")
+    return m if m in _CR_ELEVEN_MODELS else "flash_v2_5"
+
+
+def _relay_tts(org: dict, voice_id: str):
+    """Resolve (ttsProvider, voice_string, extra_attrs) for <ConversationRelay>.
+
+    When the org has a valid+enabled ElevenLabs key, we pass the SELECTED ElevenLabs voice
+    (same voice used in previews) through ConversationRelay using Twilio's ElevenLabs TTS
+    provider. Voice string format: `<voiceId>-<model>-<speed_stability_similarity>`.
+    Falls back to Google en-GB (gender-mapped) when ElevenLabs isn't configured."""
     v = get_voice(voice_id) if voice_id else None
+    integ = (org or {}).get("integrations", {})
+    el_voice = (v or {}).get("elevenlabs_voice_id")
+    if el_voice and select_tts_provider(org or {}).get("provider") == "elevenlabs":
+        vc = (org or {}).get("voice_characteristics", {}).get(voice_id, {})
+        model = _cr_eleven_model(integ)
+        speed = max(0.7, min(1.2, float(vc.get("speed", integ.get("elevenlabs_speed", 1.0)))))
+        stability = max(0.0, min(1.0, float(vc.get("stability", integ.get("elevenlabs_stability", 0.5)))))
+        similarity = max(0.0, min(1.0, float(integ.get("elevenlabs_similarity", 0.75))))
+        voice_str = f"{el_voice}-{model}-{speed:g}_{stability:g}_{similarity:g}"
+        logger.info(f"ConversationRelay TTS -> ElevenLabs voice={voice_id} ({voice_str})")
+        return "ElevenLabs", voice_str, 'elevenlabsTextNormalization="on" '
     gender = (v or {}).get("gender", "female")
-    return _VOICE_BY_GENDER.get(gender, "en-GB-Standard-A")
+    logger.info(f"ConversationRelay TTS -> Google (ElevenLabs not active) voice={voice_id}")
+    return "Google", _VOICE_BY_GENDER.get(gender, "en-GB-Standard-A"), ""
 
 
-def _relay_twiml(call_id: str, opening: str, voice_id: str) -> str:
+def _relay_twiml(call_id: str, opening: str, voice_id: str, org: dict = None) -> str:
     ws_url = f"{public_ws_url()}/api/telephony/twilio/relay/ws/{call_id}"
-    voice = _relay_voice(voice_id)
+    tts_provider, voice, extra = _relay_tts(org, voice_id)
     cr = (
         f'<ConversationRelay url={quoteattr(ws_url)} '
         f'welcomeGreeting={quoteattr((opening or "Hello, do you have a quick moment?").strip())} '
         f'welcomeGreetingInterruptible="true" interruptible="any" '
         f'reportInputDuringAgentSpeech="speech" dtmfDetection="true" '
+        f'ttsProvider={quoteattr(tts_provider)} {extra}'
         f'voice={quoteattr(voice)} language="en-GB" />'
     )
     return f'<?xml version="1.0" encoding="UTF-8"?><Response><Connect>{cr}</Connect></Response>'
@@ -88,7 +114,8 @@ def build_conversation_relay_router():
         if not await validate_twilio_request(request, await twilio_auth_token_for_org(call["org_id"])):
             return Response(status_code=403)
         await db.calls.update_one({"id": call_id}, {"$set": {"status": "in_progress", "answered_at": _now()}})
-        return Response(content=_relay_twiml(call_id, call.get("opening"), call.get("voice_id")),
+        org = await db.organizations.find_one({"id": call["org_id"]}, {"_id": 0})
+        return Response(content=_relay_twiml(call_id, call.get("opening"), call.get("voice_id"), org),
                         media_type="application/xml")
 
     @router.api_route("/incoming", methods=["GET", "POST"])
@@ -126,7 +153,7 @@ def build_conversation_relay_router():
             "transcript": [{"role": "agent", "content": ctx["opening"], "ts": _now()}],
             "created_at": _now(), "answered_at": _now(),
         })
-        return Response(content=_relay_twiml(call_id, ctx["opening"], ctx["voice_id"]),
+        return Response(content=_relay_twiml(call_id, ctx["opening"], ctx["voice_id"], org),
                         media_type="application/xml")
 
     @router.websocket("/ws/{call_id}")
