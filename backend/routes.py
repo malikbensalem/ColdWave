@@ -1,7 +1,10 @@
 import logging
+import csv
+import io
+import re
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from database import db
 from auth import get_current_user, require_admin, hash_password, require_perm, require_cap, user_can
 from models import (
@@ -135,7 +138,7 @@ async def attach_system_prefix(org: dict, channel: str = "call") -> dict:
 async def dashboard_stats(user: dict = Depends(get_current_user)):
     org_id = user["org_id"]
     contacts = await db.contacts.find({"org_id": org_id}, {"_id": 0}).to_list(5000)
-    calls = await db.calls.find({"org_id": org_id}, {"_id": 0}).to_list(5000)
+    calls = await db.calls.find({"org_id": org_id, "is_test": {"$ne": True}}, {"_id": 0}).to_list(5000)
     by_status = {s: 0 for s in PIPELINE_STATUSES}
     for c in contacts:
         by_status[c.get("status", "new")] = by_status.get(c.get("status", "new"), 0) + 1
@@ -203,7 +206,7 @@ async def list_contacts(user: dict = Depends(get_current_user), status: str = Qu
     # Attach latest-call summary + call count per contact for the CRM table.
     cmap = await _campaign_name_map(user["org_id"])
     ids = [c["id"] for c in contacts]
-    calls = await db.calls.find({"org_id": user["org_id"], "contact_id": {"$in": ids}}, {"_id": 0}).sort("created_at", -1).to_list(20000)
+    calls = await db.calls.find({"org_id": user["org_id"], "contact_id": {"$in": ids}, "is_test": {"$ne": True}}, {"_id": 0}).sort("created_at", -1).to_list(20000)
     by_contact = {}
     for cl in calls:
         cid = cl.get("contact_id")
@@ -239,6 +242,129 @@ async def create_contact(req: ContactCreate, user: dict = Depends(get_current_us
     await db.contacts.insert_one(dict(doc))
     await audit(user["org_id"], user, "create", entity="contact", entity_id=doc["id"], after=doc)
     return clean(doc)
+
+
+# ---------------- CRM CSV import ----------------
+def _norm_phone(p: str) -> str:
+    """Digits-only normalized phone for duplicate matching (last 10 digits)."""
+    d = re.sub(r"\D", "", p or "")
+    return d[-10:] if len(d) >= 10 else d
+
+
+# Maps normalized (lowercased, trimmed) CSV headers -> our contact field.
+_CSV_HEADER_MAP = {
+    "first name": "first_name", "firstname": "first_name",
+    "last name": "last_name", "lastname": "last_name",
+    "full name": "name", "name": "name", "contact name": "name",
+    "mobile phone": "phone", "mobile phone number": "phone", "phone": "phone",
+    "phone number": "phone", "mobile": "phone", "mobile number": "phone",
+    "email": "email", "email address": "email",
+    "company": "company", "company / account": "company", "company/account": "company",
+    "account": "company", "company name": "company",
+    "lead notes": "notes", "notes": "notes",
+    "lead status": "lead_status", "status": "lead_status",
+    "lead owner": "lead_owner", "owner": "lead_owner",
+    "lead owner alias": "lead_owner_alias", "owner alias": "lead_owner_alias",
+    "lead source": "lead_source", "source": "lead_source",
+    "hs-traffic-category": "hs_traffic_category", "hs traffic category": "hs_traffic_category",
+    "traffic category": "hs_traffic_category",
+    "created date": "created_date", "create date": "created_date", "created": "created_date",
+    "last activity date": "last_activity_date", "last activity": "last_activity_date",
+    "last contacted date": "last_contacted_date", "last contacted": "last_contacted_date",
+    "last contact date": "last_contacted_date",
+}
+
+
+@router.post("/contacts/import")
+async def import_contacts(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    """Import CRM leads from a HubSpot-style CSV. Always creates new contacts and flags
+    potential duplicates (matching phone or email of an existing lead)."""
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(400, "Please upload a .csv file.")
+    raw = await file.read()
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 10 MB).")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(400, "The CSV appears to be empty.")
+
+    colmap = {}  # original header -> our field
+    for h in reader.fieldnames:
+        key = (h or "").strip().lower()
+        if key in _CSV_HEADER_MAP:
+            colmap[h] = _CSV_HEADER_MAP[key]
+
+    org_id = user["org_id"]
+    # Existing keys for duplicate detection.
+    existing = await db.contacts.find({"org_id": org_id}, {"_id": 0, "phone": 1, "email": 1}).to_list(20000)
+    seen_phones = {_norm_phone(c.get("phone", "")) for c in existing if c.get("phone")}
+    seen_emails = {(c.get("email") or "").strip().lower() for c in existing if c.get("email")}
+    dnc_rows = await db.dnc_list.find({"org_id": org_id}, {"_id": 0, "phone": 1}).to_list(20000)
+    dnc_phones = {_norm_phone(d.get("phone", "")) for d in dnc_rows}
+
+    created, duplicates, skipped, errors = 0, 0, 0, []
+    docs = []
+    for i, row in enumerate(reader, start=2):  # header is row 1
+        vals = {}
+        first = last = ""
+        for orig, field in colmap.items():
+            v = (row.get(orig) or "").strip()
+            if field == "first_name":
+                first = v
+            elif field == "last_name":
+                last = v
+            elif v:
+                vals[field] = v
+        name = vals.get("name") or " ".join(x for x in [first, last] if x).strip()
+        phone = vals.get("phone", "")
+        email = vals.get("email", "")
+        if not name and not phone and not email:
+            continue  # blank row
+        if not name:
+            name = phone or email
+        if not phone:
+            errors.append(f"Row {i}: missing phone — skipped.")
+            skipped += 1
+            continue
+
+        np, ne = _norm_phone(phone), email.strip().lower()
+        is_dup = (np and np in seen_phones) or (ne and ne in seen_emails)
+        dup_reason = ""
+        if is_dup:
+            dup_reason = "Matches an existing lead's phone or email."
+            duplicates += 1
+        seen_phones.add(np)
+        if ne:
+            seen_emails.add(ne)
+
+        on_dnc = np in dnc_phones
+        doc = {
+            "id": new_id("contact"), "org_id": org_id, "name": name, "phone": phone,
+            "email": email, "company": vals.get("company", ""), "notes": vals.get("notes", ""),
+            "consent": False, "status": "dnc" if on_dnc else "new", "opted_out": on_dnc,
+            "sentiment": None, "last_called_at": None, "created_at": now_utc().isoformat(),
+            "first_name": first, "last_name": last,
+            "lead_status": vals.get("lead_status", ""), "lead_owner": vals.get("lead_owner", ""),
+            "lead_owner_alias": vals.get("lead_owner_alias", ""), "lead_source": vals.get("lead_source", ""),
+            "hs_traffic_category": vals.get("hs_traffic_category", ""),
+            "lead_created_date": vals.get("created_date", ""),
+            "last_activity_date": vals.get("last_activity_date", ""),
+            "last_contacted_date": vals.get("last_contacted_date", ""),
+            "is_potential_duplicate": is_dup, "duplicate_reason": dup_reason,
+            "source_import": file.filename,
+        }
+        docs.append(doc)
+        created += 1
+
+    if docs:
+        await db.contacts.insert_many([dict(d) for d in docs])
+    await audit(org_id, user, "import", detail=f"Imported {created} leads from {file.filename}", entity="contact")
+    return {"created": created, "duplicates": duplicates, "skipped": skipped,
+            "errors": errors[:20], "mapped_columns": list(set(colmap.values()))}
 
 
 @router.get("/contacts/{contact_id}")
@@ -330,7 +456,7 @@ CAMPAIGN_AUDIENCE_QUERY = {
 
 
 async def _campaign_calls(org_id: str, campaign_id: str) -> list:
-    return await db.calls.find({"org_id": org_id, "campaign_id": campaign_id}, {"_id": 0}).sort("created_at", -1).to_list(20000)
+    return await db.calls.find({"org_id": org_id, "campaign_id": campaign_id, "is_test": {"$ne": True}}, {"_id": 0}).sort("created_at", -1).to_list(20000)
 
 
 def _campaign_analytics(calls: list) -> dict:

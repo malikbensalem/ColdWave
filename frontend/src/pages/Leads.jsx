@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import api, { apiErr } from "../lib/api";
 import { StatusBadge, SentimentBadge } from "../components/StatusBadge";
@@ -6,7 +6,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { MagnifyingGlass, Plus, Trash, PhoneCall, ShieldSlash, FileText, ChatText, Star } from "@phosphor-icons/react";
+import { MagnifyingGlass, Plus, Trash, PhoneCall, ShieldSlash, FileText, ChatText, Star, UploadSimple, WarningCircle } from "@phosphor-icons/react";
 import { CallMonitor } from "../components/CallMonitor";
 
 const STATUSES = ["all", "new", "contacted", "positive", "callback", "opted_out", "dnc"];
@@ -53,6 +53,8 @@ export default function Leads() {
   const [form, setForm] = useState({ name: "", phone: "", email: "", company: "", notes: "", consent: false });
   const [cbDate, setCbDate] = useState("");
   const [cbType, setCbType] = useState("human");
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef(null);
 
   const load = useCallback(async () => {
     const params = {};
@@ -86,6 +88,26 @@ export default function Leads() {
   const openDetail = async (id) => {
     const { data } = await api.get(`/contacts/${id}`);
     setDetail(data);
+  };
+
+  const onImportFile = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setImporting(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const { data } = await api.post("/contacts/import", fd);
+      toast.success(
+        `Imported ${data.created} lead${data.created === 1 ? "" : "s"}` +
+        (data.duplicates ? ` · ${data.duplicates} flagged as potential duplicate${data.duplicates === 1 ? "" : "s"}` : "") +
+        (data.skipped ? ` · ${data.skipped} skipped` : "")
+      );
+      if (data.errors?.length) toast.warning(data.errors[0]);
+      load();
+    } catch (err) { toast.error(apiErr(err)); }
+    finally { setImporting(false); }
   };
 
   const setStatus = async (id, status) => {
@@ -145,6 +167,12 @@ export default function Leads() {
           <h1 className="font-display font-bold text-3xl tracking-tight">CRM · Leads</h1>
           <p className="text-sm text-muted-foreground mt-1">Multi-call history, ratings, summaries &amp; transcripts per lead.</p>
         </div>
+        <div className="flex items-center gap-2">
+        <input ref={fileRef} type="file" accept=".csv,text/csv" data-testid="import-csv-input" onChange={onImportFile} className="hidden" />
+        <button data-testid="import-csv-button" disabled={importing} onClick={() => fileRef.current?.click()}
+          className="inline-flex items-center gap-2 h-10 px-4 border border-border bg-card rounded-sm text-sm font-medium hover:bg-accent active:scale-[0.99] transition-all disabled:opacity-50">
+          <UploadSimple size={16} weight="bold" /> {importing ? "Importing…" : "Import CSV"}
+        </button>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
             <button data-testid="add-lead-button" className="inline-flex items-center gap-2 h-10 px-4 bg-primary text-primary-foreground rounded-sm text-sm font-medium hover:opacity-90 active:scale-[0.99] transition-all">
@@ -168,6 +196,7 @@ export default function Leads() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -194,6 +223,8 @@ export default function Leads() {
               <th className="py-2.5 px-4 font-semibold">Company</th>
               <th className="py-2.5 px-4 font-semibold">Phone</th>
               <th className="py-2.5 px-4 font-semibold">Email</th>
+              <th className="py-2.5 px-4 font-semibold">Owner</th>
+              <th className="py-2.5 px-4 font-semibold">Source</th>
               <th className="py-2.5 px-4 font-semibold">Status</th>
               <th className="py-2.5 px-4 font-semibold">Rating</th>
               <th className="py-2.5 px-4 font-semibold">Last summary</th>
@@ -211,10 +242,18 @@ export default function Leads() {
                 <td className="py-2.5 px-4 font-medium">
                   {c.name}
                   {c.call_count > 0 && <span className="ml-1.5 text-[10px] tnum text-muted-foreground">({c.call_count} call{c.call_count > 1 ? "s" : ""})</span>}
+                  {c.is_potential_duplicate && (
+                    <span data-testid={`dup-badge-${c.id}`} title={c.duplicate_reason || "Potential duplicate"}
+                      className="ml-1.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase bg-amber-100 text-amber-700 align-middle">
+                      <WarningCircle size={10} weight="fill" /> Dup
+                    </span>
+                  )}
                 </td>
                 <td className="py-2.5 px-4 text-muted-foreground">{c.company || "—"}</td>
                 <td className="py-2.5 px-4 tnum text-muted-foreground">{c.phone}</td>
                 <td className="py-2.5 px-4 text-muted-foreground truncate max-w-[160px]">{c.email || "—"}</td>
+                <td className="py-2.5 px-4 text-muted-foreground text-xs">{c.lead_owner || "—"}</td>
+                <td className="py-2.5 px-4 text-muted-foreground text-xs">{c.lead_source || "—"}</td>
                 <td className="py-2.5 px-4"><StatusBadge status={c.status} /></td>
                 <td className="py-2.5 px-4"><RatingBadge value={c.last_call_rating} /></td>
                 <td className="py-2.5 px-4 text-muted-foreground max-w-[220px]">
@@ -234,7 +273,7 @@ export default function Leads() {
                 </td>
               </tr>
             ); })}
-            {contacts.length === 0 && <tr><td colSpan={10} className="py-10 text-center text-muted-foreground text-sm">No leads found.</td></tr>}
+            {contacts.length === 0 && <tr><td colSpan={13} className="py-10 text-center text-muted-foreground text-sm">No leads found.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -246,12 +285,26 @@ export default function Leads() {
             <>
               <SheetHeader><SheetTitle className="font-display text-2xl">{detail.name}</SheetTitle></SheetHeader>
               <div className="mt-4 space-y-4">
-                <div className="flex items-center gap-2"><StatusBadge status={detail.status} /><SentimentBadge sentiment={detail.sentiment} /></div>
+                <div className="flex items-center gap-2 flex-wrap"><StatusBadge status={detail.status} /><SentimentBadge sentiment={detail.sentiment} />
+                  {detail.is_potential_duplicate && (
+                    <span data-testid="detail-dup-badge" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-700">
+                      <WarningCircle size={13} weight="fill" /> Potential duplicate
+                    </span>
+                  )}
+                </div>
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <Info label="Company" value={detail.company} />
                   <Info label="Phone" value={detail.phone} mono />
                   <Info label="Email" value={detail.email} />
                   <Info label="Consent" value={detail.consent ? "Yes" : "No"} />
+                  {detail.lead_status && <Info label="Lead status" value={detail.lead_status} />}
+                  {detail.lead_owner && <Info label="Lead owner" value={detail.lead_owner} />}
+                  {detail.lead_owner_alias && <Info label="Owner alias" value={detail.lead_owner_alias} />}
+                  {detail.lead_source && <Info label="Lead source" value={detail.lead_source} />}
+                  {detail.hs_traffic_category && <Info label="Traffic category" value={detail.hs_traffic_category} />}
+                  {detail.lead_created_date && <Info label="Created (import)" value={detail.lead_created_date} />}
+                  {detail.last_activity_date && <Info label="Last activity" value={detail.last_activity_date} />}
+                  {detail.last_contacted_date && <Info label="Last contacted" value={detail.last_contacted_date} />}
                 </div>
 
                 <div>

@@ -86,11 +86,11 @@ LLM_MODELS = {
                "gpt-4o", "gpt-4.1", "gpt-4.1-mini", "o3", "o4-mini"],
     "anthropic": ["claude-sonnet-4-6", "claude-opus-4-8", "claude-opus-4-7", "claude-haiku-4-5-20251001",
                   "claude-sonnet-4-5-20250929"],
-    "gemini": ["gemini-3.1-pro-preview", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-2.5-pro",
-               "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+    "gemini": ["gemini-2.5-flash-lite", "gemini-3.5-flash", "gemini-3-flash-preview",
+               "gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash"],
 }
 PROVIDER_KEY_FIELD = {"openai": "openai_api_key", "anthropic": "anthropic_api_key", "gemini": "gemini_api_key"}
-DEFAULT_MODEL = {"openai": "gpt-5.4", "anthropic": "claude-sonnet-4-6", "gemini": "gemini-3.1-pro-preview"}
+DEFAULT_MODEL = {"openai": "gpt-5.4", "anthropic": "claude-sonnet-4-6", "gemini": "gemini-2.5-flash-lite"}
 
 
 def get_llm_models():
