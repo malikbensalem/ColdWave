@@ -288,7 +288,8 @@ function IntegrationsTab() {
             </button>
             <span className="text-[11px] text-muted-foreground">Saves the Voice ID, then plays a sample using your ElevenLabs key.</span>
           </div>
-          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-sm px-2 py-1.5">For <b>live Twilio calls</b>, custom/cloned voices also require your ElevenLabs API key to be linked in the Twilio Console (Voice → TTS providers). Previews & test calls work with the key saved here.</p>
+          <p className="text-[11px] text-muted-foreground">To use any voice from the ElevenLabs <b>Explore</b> library: open it → <b>“Add to My Voices”</b>, then copy the Voice ID from <b>My Voices</b> and paste it above. To switch voices later, just paste a different Voice ID and Save. Your own & default voices work on any plan.</p>
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-sm px-2 py-1.5">Heads up: ElevenLabs <b>free plans cannot use shared/Explore library voices via the API</b> (you’ll get a “paid plan required” error) — add the voice to My Voices or upgrade. For <b>live Twilio calls</b>, custom voices also need your ElevenLabs API key linked in the Twilio Console (Voice → TTS providers).</p>
         </div>
         <p className="text-xs text-muted-foreground">Paste a key and it validates automatically — if valid, voices are enabled and saved. Test calls then use ElevenLabs audio (no silent fallback).</p>
       </Section>

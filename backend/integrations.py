@@ -422,6 +422,46 @@ def _dynamic_voice_params(text: str) -> tuple:
     return (0.50, 0.30, 1.0)
 
 
+def _parse_elevenlabs_error(e: Exception) -> tuple:
+    """Extract (status_code, code, message) from an ElevenLabs SDK ApiError or generic exception."""
+    status = getattr(e, "status_code", None)
+    body = getattr(e, "body", None)
+    code, message = "", ""
+    if isinstance(body, dict):
+        detail = body.get("detail")
+        if isinstance(detail, dict):
+            code = detail.get("code", "") or detail.get("status", "")
+            message = detail.get("message", "")
+        elif isinstance(detail, str):
+            message = detail
+    if not message:
+        raw = str(e)
+        message = raw[:200]
+        if not status and "402" in raw:
+            status = 402
+        if not code and "paid_plan_required" in raw:
+            code = "paid_plan_required"
+    return status, code, message
+
+
+def _friendly_tts_error(status, code, message, voice) -> str:
+    """Turn raw ElevenLabs errors into clear, actionable guidance."""
+    vid = (voice or {}).get("elevenlabs_voice_id", "")
+    if status == 402 or code in ("paid_plan_required", "payment_required"):
+        return ("This is an ElevenLabs Explore (shared library) voice. ElevenLabs does not allow "
+                "free plans to use library voices via the API. To use it: (1) open the voice on the "
+                "ElevenLabs Explore page and click \u201cAdd to My Voices\u201d, then paste the Voice ID shown "
+                "under My Voices, or (2) upgrade your ElevenLabs subscription (Starter or above). "
+                "Your own and default voices work on any plan.")
+    if status == 401 or code == "invalid_api_key":
+        return "Your ElevenLabs API key is invalid or unauthorised. Re-check it in Settings \u2192 Integrations."
+    if status == 404 or code == "voice_not_found" or "voice_not_found" in (message or ""):
+        return (f"Voice ID \u201c{vid}\u201d was not found in your ElevenLabs account. For Explore voices, add the "
+                "voice to \u2018My Voices\u2019 first, then paste that Voice ID.")
+    return f"ElevenLabs error{f' ({status})' if status else ''}: {message or 'request failed'}"
+
+
+
 async def generate_tts(org: dict, voice_id: str, text: str, model: str = None) -> dict:
     """Generate speech using the selected provider. Logs selection; never falls back silently
     when a valid ElevenLabs key exists. Returns {provider, voice, audio_url, reason, error}.
@@ -485,10 +525,13 @@ async def generate_tts(org: dict, voice_id: str, text: str, model: str = None) -
         return {"provider": "elevenlabs", "voice": voice,
                 "audio_url": f"data:audio/mpeg;base64,{b64}", "reason": "valid_config", "error": None}
     except Exception as e:
-        # IMPORTANT: do NOT silently fall back when a key was configured. Surface the error.
-        logger.error(f"TTS elevenlabs ERROR (configured key present) voice={voice_id}: {e}")
-        return {"provider": "elevenlabs_error1", "voice": voice, "audio_url": None,
-                "reason": "elevenlabs_call_failed", "error": str(e)}
+        # IMPORTANT: do NOT silently fall back when a key was configured. Surface a CLEAR error.
+        status, code, detail_msg = _parse_elevenlabs_error(e)
+        friendly = _friendly_tts_error(status, code, detail_msg, voice)
+        logger.error(f"TTS elevenlabs ERROR voice={voice_id} status={status} code={code}: {detail_msg or e}")
+        return {"provider": "elevenlabs_error", "voice": voice, "audio_url": None,
+                "reason": "elevenlabs_call_failed", "error": friendly,
+                "error_code": code, "status": status}
 
 
 # ---------------- Knowledge-base guided opening line + guardrails ----------------
