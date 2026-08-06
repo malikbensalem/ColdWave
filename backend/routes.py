@@ -392,6 +392,18 @@ async def update_contact(contact_id: str, req: ContactUpdate, user: dict = Depen
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(400, "No updates provided")
+    # When a callback is scheduled, move the lead to the callback stage AND tag their most
+    # recent (answered) call as a callback so it's clear that call produced a callback.
+    if updates.get("callback_at"):
+        updates.setdefault("status", "callback")
+        last_call = await db.calls.find_one(
+            {"org_id": user["org_id"], "contact_id": contact_id, "is_test": {"$ne": True},
+             "status": {"$nin": ["no_answer"]}},
+            {"_id": 0, "id": 1}, sort=[("created_at", -1)])
+        if last_call:
+            await db.calls.update_one({"id": last_call["id"]}, {"$set": {
+                "is_callback": True, "outcome": "callback",
+                "callback_at": updates["callback_at"], "callback_type": updates.get("callback_type", "human")}})
     res = await db.contacts.update_one({"id": contact_id, "org_id": user["org_id"]}, {"$set": updates})
     if res.matched_count == 0:
         raise HTTPException(404, "Contact not found")

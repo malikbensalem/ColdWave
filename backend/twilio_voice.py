@@ -232,18 +232,22 @@ def build_twilio_voice_router():
                 if cstatus == "completed" and answered and not is_vm:
                     org = await db.organizations.find_one({"id": call["org_id"]}, {"_id": 0})
                     tx = "\n".join([f"{m['role']}: {m['content']}" for m in transcript])
+                    eb = call.get("ended_by") or "prospect_hangup"
+                    out = "callback" if call.get("is_callback") else "answered"
                     try:
                         analysis = await analyze_transcript(tx, session_id=call_id, org=org)
                         updates.update({"analysis": analysis, "summary": analysis.get("summary"),
                                         "sentiment": analysis.get("sentiment"), "rating": analysis.get("score"),
-                                        "status": "completed", "outcome": "answered"})
+                                        "status": "completed", "outcome": out, "ended_by": eb})
                     except Exception as e:
                         logger.error(f"twilio status analyze failed: {e}")
-                        updates.update({"status": "completed", "outcome": "answered"})
+                        updates.update({"status": "completed", "outcome": out, "ended_by": eb})
                 else:
                     # Not answered / voicemail — mark as no answer, do NOT rate.
+                    eb = call.get("ended_by") or (cstatus.replace("-", "_") if cstatus != "completed" else "no_answer")
                     updates.update({"status": "no_answer",
-                                    "outcome": "voicemail" if is_vm else "no_answer"})
+                                    "outcome": "voicemail" if is_vm else "no_answer",
+                                    "ended_by": eb})
             # Free the call's synthesised audio.
             try:
                 await db.tts_audio.delete_many({"call_id": call_id})
@@ -270,7 +274,8 @@ def build_twilio_voice_router():
             tx.append({"role": "system",
                        "content": f"Voicemail / answering machine detected ({answered_by}) — call ended automatically.",
                        "ts": _now()})
-            updates.update({"voicemail": True, "outcome": "voicemail", "status": "no_answer", "transcript": tx})
+            updates.update({"voicemail": True, "outcome": "voicemail", "status": "no_answer",
+                            "ended_by": "voicemail", "transcript": tx})
             sid = call.get("provider_call_sid") or call.get("callid")
             if call.get("provider") == "twilio" and sid:
                 org = await db.organizations.find_one({"id": call["org_id"]}, {"_id": 0})

@@ -43,6 +43,13 @@ const EMPTY_LEAD = {
   lead_source: "", hs_traffic_category: "",
 };
 
+const ENDED_BY_LABELS = {
+  agent: "AI agent (goodbye)", prospect_optout: "Prospect (opted out)", prospect_hangup: "Prospect (hung up)",
+  silence_timeout: "Silence timeout", voicemail: "Voicemail", no_answer: "No answer",
+  busy: "Busy", failed: "Network/failed", canceled: "Cancelled",
+};
+function endedByLabel(v) { return ENDED_BY_LABELS[v] || (v ? String(v).replace(/_/g, " ") : "—"); }
+
 export default function Leads() {
   const [contacts, setContacts] = useState([]);
   const [filter, setFilter] = useState("all");
@@ -372,8 +379,10 @@ export default function Leads() {
                           <div className="text-muted-foreground mt-0.5">{fmtDate(c.created_at)}</div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
+                          {(c.is_callback || c.outcome === "callback") && <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-700">Callback</span>}
                           {c.voicemail && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-orange-100 text-orange-700">Voicemail</span>}
-                          {!c.voicemail && c.status === "no_answer" && <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-secondary text-muted-foreground">No answer</span>}
+                          {!c.voicemail && c.suspected_voicemail && <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-orange-50 text-orange-600">Suspected voicemail</span>}
+                          {!c.voicemail && !c.suspected_voicemail && c.status === "no_answer" && <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-secondary text-muted-foreground">No answer</span>}
                           <RatingBadge value={c.rating} />
                           <SentimentBadge sentiment={c.sentiment} />
                         </div>
@@ -381,6 +390,7 @@ export default function Leads() {
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
                         <span>Campaign: <span className="text-foreground">{c.campaign_name || "—"}</span></span>
                         <span>Status: <span className="text-foreground capitalize">{c.status || "—"}</span></span>
+                        {c.ended_by && <span>Ended by: <span className="text-foreground">{endedByLabel(c.ended_by)}</span></span>}
                       </div>
                       {c.summary && <div className="text-muted-foreground line-clamp-2">{c.summary}</div>}
                       <div className="flex gap-2 pt-1">

@@ -198,7 +198,7 @@ def build_conversation_relay_router():
         # Connection-scoped cache — loaded once on setup, no DB reads on the hot path.
         ctx = {"loaded": False, "org": None, "transcript": [], "call": None}
         state = {"task": None, "pending": "", "speaking": False, "last_activity": time.monotonic(),
-                 "nudged": False, "closing": False, "silence_task": None}
+                 "nudged": False, "closing": False, "silence_task": None, "ended_by": None}
 
         async def _load():
             call = await db.calls.find_one({"id": call_id}, {"_id": 0})
@@ -224,23 +224,34 @@ def build_conversation_relay_router():
             call = await db.calls.find_one({"id": call_id}, {"_id": 0}) or ctx["call"] or {}
             answered = any(m.get("role") == "prospect" for m in transcript)
             is_vm = bool(call.get("voicemail"))
+            eb = state.get("ended_by")
             # Do NOT rate calls that were never answered or went to voicemail.
             if is_vm or not answered:
+                if not eb:
+                    eb = "voicemail" if is_vm else "no_answer"
+                # Connected (greeting played) but the prospect never spoke → likely a
+                # voicemail greeting / answering machine our AMD didn't flag.
+                suspected = (not is_vm) and (not answered) and bool(call.get("answered_at"))
                 await db.calls.update_one({"id": call_id}, {"$set": {
                     "status": "no_answer",
                     "outcome": "voicemail" if is_vm else "no_answer",
+                    "suspected_voicemail": suspected,
+                    "ended_by": eb,
                     "transcript": transcript}})
                 return
             tx = "\n".join([f"{m['role']}: {m['content']}" for m in transcript])
             if not tx.strip():
                 return
+            if not eb:
+                eb = "prospect_hangup"  # WS closed without an intentional agent/opt-out/silence close
             org = ctx["org"] or await db.organizations.find_one({"id": (ctx["call"] or {}).get("org_id")}, {"_id": 0})
             try:
                 analysis = await analyze_transcript(tx, session_id=call_id, org=org)
+                out = "callback" if call.get("is_callback") else "answered"
                 await db.calls.update_one({"id": call_id}, {"$set": {
                     "analysis": analysis, "summary": analysis.get("summary"),
                     "sentiment": analysis.get("sentiment"), "rating": analysis.get("score"),
-                    "status": "completed", "outcome": "answered",
+                    "status": "completed", "outcome": out, "ended_by": eb,
                     "transcript": transcript}})
             except Exception as e:
                 logger.error(f"relay finalise analyze failed: {e}")
@@ -320,6 +331,7 @@ def build_conversation_relay_router():
                 agent_goodbye = any(h in reply.lower() for h in AGENT_CLOSE)
                 if optout or agent_goodbye:
                     state["closing"] = True
+                    state["ended_by"] = "prospect_optout" if optout else "agent"
                     await asyncio.sleep(0.3)
                     await ws.send_text(json.dumps({"type": "end"}))
             finally:
@@ -351,6 +363,7 @@ def build_conversation_relay_router():
                         return
                 elif state["nudged"] and idle >= silence:
                     state["closing"] = True
+                    state["ended_by"] = "silence_timeout"
                     try:
                         await ws.send_text(json.dumps({"type": "text", "token": "No problem, I'll let you go. Thanks for your time, goodbye.", "last": True}))
                         await asyncio.sleep(0.6)

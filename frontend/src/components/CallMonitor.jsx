@@ -53,6 +53,7 @@ export function CallMonitor({ callId, onClose, onEnded }) {
             <Broadcast size={20} weight="fill" className="text-primary" /> Listening in
             {detail && <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium capitalize ${TONE[detail.status] || "bg-secondary text-secondary-foreground"}`}>{String(detail.status || "").replace(/[-_]/g, " ")}</span>}
             {isVoicemail && <span data-testid="voicemail-badge" className="px-2 py-0.5 rounded-full text-[11px] font-semibold inline-flex items-center gap-1 bg-orange-100 text-orange-700"><Voicemail size={13} weight="fill" /> Voicemail</span>}
+            {detail?.ended_by && <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-secondary text-muted-foreground">Ended by: {String(detail.ended_by).replace(/_/g, " ")}</span>}
           </DialogTitle>
         </DialogHeader>
         <div className="text-xs text-muted-foreground -mt-1">
