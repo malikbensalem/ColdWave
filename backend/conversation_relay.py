@@ -30,10 +30,28 @@ from integrations import stream_agent_reply, analyze_transcript, get_voice, sele
 
 logger = logging.getLogger("conversation_relay")
 
-CLOSE_HINTS = ("goodbye", "bye for now", "have a great day", "take care", "remove you",
-               "removed you", "won't call", "won't contact")
-OPTOUT_HINTS = ("not interested", "opt out", "stop calling", "do not call", "remove me")
+# The call ends ONLY when the AGENT clearly says goodbye, or the prospect explicitly opts out.
+# (Never end just because the prospect used a casual word — that caused random hang-ups.)
+AGENT_CLOSE = ("goodbye", "good bye", "have a great day", "have a lovely day", "have a good day",
+               "have a nice day", "thanks for your time", "thank you for your time", "take care",
+               "bye for now", "speak soon", "we'll be in touch", "i'll let you go", "enjoy the rest of your day")
+OPTOUT_HINTS = ("not interested", "opt out", "opt-out", "stop calling", "do not call",
+                "remove me", "take me off", "don't call me")
+# STT hints (comma-separated) — likely cold-call phrases to boost recognition accuracy.
+_COMMON_HINTS = ("yes,no,maybe,not interested,tell me more,who is this,who's this,how did you get my number,"
+                 "how much,pricing,cost,send me an email,email me,call me back,call back,not a good time,"
+                 "busy right now,remove me,take me off your list,speak to a manager,no thank you,goodbye,hello")
 _SENTENCE_END = re.compile(r'[.!?…]+["\')\]]*(\s|$)')
+
+
+def _stt_hints(org: dict) -> str:
+    parts = []
+    brand = (org or {}).get("brand_name") or (org or {}).get("name")
+    if brand:
+        parts.append(str(brand))
+    parts.append(_COMMON_HINTS)
+    return ",".join(parts)
+
 
 # Google en-GB voices for Twilio's built-in TTS (fallback when ElevenLabs isn't configured).
 _VOICE_BY_GENDER = {"male": "en-GB-Standard-B", "female": "en-GB-Standard-A"}
@@ -75,7 +93,7 @@ def _relay_tts(org: dict, voice_id: str):
     (same voice used in previews) through ConversationRelay using Twilio's ElevenLabs TTS
     provider. Voice string format: `<voiceId>-<model>-<speed_stability_similarity>`.
     Falls back to Google en-GB (gender-mapped) when ElevenLabs isn't configured."""
-    v = get_voice(voice_id) if voice_id else None
+    v = get_voice(voice_id, org) if voice_id else None
     integ = (org or {}).get("integrations", {})
     el_voice = (v or {}).get("elevenlabs_voice_id")
     if el_voice and select_tts_provider(org or {}).get("provider") == "elevenlabs":
@@ -99,7 +117,8 @@ def _relay_twiml(call_id: str, opening: str, voice_id: str, org: dict = None) ->
         f'<ConversationRelay url={quoteattr(ws_url)} '
         f'welcomeGreeting={quoteattr((opening or "Hello, do you have a quick moment?").strip())} '
         f'welcomeGreetingInterruptible="true" interruptible="any" '
-        f'reportInputDuringAgentSpeech="speech" dtmfDetection="true" '
+        f'interruptSensitivity="medium" ignoreBackchannel="true" dtmfDetection="true" '
+        f'hints={quoteattr(_stt_hints(org))} '
         f'ttsProvider={quoteattr(tts_provider)} {extra}'
         f'voice={quoteattr(voice)} language="en-GB" />'
     )
@@ -285,8 +304,10 @@ def build_conversation_relay_router():
             ctx["transcript"].append({"role": "agent", "content": reply, "ts": _now()})
             await _persist_transcript()
 
-            low = f"{said} {reply}".lower()
-            ending = any(h in low for h in CLOSE_HINTS) or any(k in said.lower() for k in OPTOUT_HINTS)
+            # End the call ONLY when the agent clearly signs off, or the prospect explicitly opts out.
+            optout = any(k in said.lower() for k in OPTOUT_HINTS)
+            agent_goodbye = any(h in reply.lower() for h in AGENT_CLOSE)
+            ending = optout or agent_goodbye
             if ending:
                 await asyncio.sleep(0.3)
                 await ws.send_text(json.dumps({"type": "end"}))

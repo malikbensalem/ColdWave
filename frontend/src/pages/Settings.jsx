@@ -260,6 +260,15 @@ function IntegrationsTab() {
           <Rng label="Speed" testid="eleven-speed" min={0.7} max={1.2} step={0.05} value={data.elevenlabs_speed ?? 1.0} onChange={set("elevenlabs_speed")} />
         </div>
         <p className="text-xs text-muted-foreground">Use <b>Flash v2.5</b> for the lowest latency on live calls. Lower stability = more expressive; higher = more consistent.</p>
+        <div className="mt-3 rounded-sm border border-border bg-muted/30 p-3 space-y-3">
+          <div className="text-xs uppercase tracking-[0.15em] font-semibold text-foreground">Custom voice (from your ElevenLabs account)</div>
+          <p className="text-xs text-muted-foreground">Paste any Voice ID from your ElevenLabs account. It appears as <b>“Custom voice”</b> on the Voices page and can be selected for calls, previews and campaigns.</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <F label="Custom Voice ID" testid="eleven-custom-voice-id" value={data.elevenlabs_custom_voice_id || ""} onChange={set("elevenlabs_custom_voice_id")} placeholder="e.g. pFZP5JQG7iQjIQuC4Bku" />
+            <F label="Display name" testid="eleven-custom-voice-name" value={data.elevenlabs_custom_voice_name || ""} onChange={set("elevenlabs_custom_voice_name")} placeholder="e.g. My Brand Voice" />
+            <Sel label="Gender" testid="eleven-custom-voice-gender" value={data.elevenlabs_custom_voice_gender || "female"} onChange={set("elevenlabs_custom_voice_gender")} options={[{ value: "female", label: "Female" }, { value: "male", label: "Male" }]} />
+          </div>
+        </div>
         <p className="text-xs text-muted-foreground">Paste a key and it validates automatically — if valid, voices are enabled and saved. Test calls then use ElevenLabs audio (no silent fallback).</p>
       </Section>
 

@@ -125,6 +125,9 @@ class IntegrationSettings(BaseModel):
     elevenlabs_similarity: float = 0.75
     elevenlabs_style: float = 0.0
     elevenlabs_speed: float = 1.0
+    elevenlabs_custom_voice_id: str = ""
+    elevenlabs_custom_voice_name: str = ""
+    elevenlabs_custom_voice_gender: str = "female"
     o365_enabled: bool = False
     o365_tenant_id: str = ""
     o365_client_id: str = ""

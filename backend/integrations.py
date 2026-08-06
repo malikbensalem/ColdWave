@@ -29,6 +29,12 @@ VOICE_CATALOG = [
     {"id": "alice",   "name": "Alice",    "gender": "female", "accent": "British",  "description": "Professional UK female — clear and friendly.",  "persona": "A friendly, professional sales consultant who is clear, approachable and helpful.", "elevenlabs_voice_id": "Xb7hH8MSUJpSbSDYk0k2"},
     {"id": "lily",    "name": "Lily",     "gender": "female", "accent": "British",  "description": "Soft, approachable UK female — great rapport.", "persona": "A soft-spoken, empathetic representative who quickly builds rapport and puts people at ease.", "elevenlabs_voice_id": "pFZP5JQG7iQjIQuC4Bku"},
     {"id": "matilda", "name": "Matilda",  "gender": "female", "accent": "American", "description": "Bright US female — upbeat and persuasive.",    "persona": "A bright, persuasive US-based account manager who is upbeat and enthusiastic.", "elevenlabs_voice_id": "XrExE9yKIg1WjnnlVkGX"},
+    {"id": "rachel",  "name": "Rachel",   "gender": "female", "accent": "American", "description": "Calm, natural US female — reassuring and clear.", "persona": "A calm, reassuring consultant who explains things clearly and never rushes.", "elevenlabs_voice_id": "21m00Tcm4TlvDq8ikWAM"},
+    {"id": "domi",    "name": "Domi",     "gender": "female", "accent": "American", "description": "Strong, confident US female — direct and assertive.", "persona": "A confident, direct closer who is assertive but personable.", "elevenlabs_voice_id": "AZnzlk1XvdvUeBnXmlld"},
+    {"id": "elli",    "name": "Elli",     "gender": "female", "accent": "American", "description": "Warm, youthful US female — friendly and expressive.", "persona": "A warm, expressive young rep who is friendly and easy to talk to.", "elevenlabs_voice_id": "MF3mGyEYCl7XYWbV9V6O"},
+    {"id": "adam",    "name": "Adam",     "gender": "male",   "accent": "American", "description": "Deep, natural US male — grounded and confident.", "persona": "A grounded, confident account executive with a deep, reassuring voice.", "elevenlabs_voice_id": "pNInz6obpgDQGcFmaJgB"},
+    {"id": "antoni",  "name": "Antoni",   "gender": "male",   "accent": "American", "description": "Well-rounded US male — smooth and personable.", "persona": "A smooth, personable sales rep who builds easy rapport.", "elevenlabs_voice_id": "ErXwobaYiN019PkySvjV"},
+    {"id": "josh",    "name": "Josh",     "gender": "male",   "accent": "American", "description": "Young, energetic US male — enthusiastic and quick.", "persona": "An enthusiastic young rep who keeps the energy up and the conversation moving.", "elevenlabs_voice_id": "TxGEqnHWrfWFTfGW9XjX"},
 ]
 
 # Selectable ElevenLabs models (dropdown in Settings).
@@ -45,17 +51,29 @@ def get_elevenlabs_models():
     return ELEVENLABS_MODELS
 
 
-def get_voice(voice_id: str):
-    return next((v for v in VOICE_CATALOG if v["id"] == voice_id), None)
+def get_voice(voice_id: str, org: dict = None):
+    v = next((v for v in VOICE_CATALOG if v["id"] == voice_id), None)
+    if v:
+        return v
+    # Custom ElevenLabs voice pasted by the user in Settings → Integrations.
+    if voice_id == "custom" and org:
+        integ = (org or {}).get("integrations", {})
+        cid = (integ.get("elevenlabs_custom_voice_id") or "").strip()
+        if cid:
+            return {"id": "custom", "name": integ.get("elevenlabs_custom_voice_name") or "Custom voice",
+                    "gender": integ.get("elevenlabs_custom_voice_gender") or "female",
+                    "accent": "Custom", "description": "Your custom ElevenLabs voice.",
+                    "persona": "", "elevenlabs_voice_id": cid}
+    return None
 
 
 def _eleven_key(org_key: str = "") -> str:
     return org_key or os.environ.get("ELEVENLABS_API_KEY", "")
 
 
-async def generate_voice_preview(voice_id: str, text: str, org_key: str = "") -> dict:
+async def generate_voice_preview(voice_id: str, text: str, org_key: str = "", org: dict = None) -> dict:
     """Returns {mock: bool, audio_url: str|None, voice: dict}."""
-    voice = get_voice(voice_id)
+    voice = get_voice(voice_id, org)
     if not voice:
         return {"mock": True, "audio_url": None, "voice": None, "error": "voice not found"}
     key = _eleven_key(org_key)
@@ -409,7 +427,7 @@ async def generate_tts(org: dict, voice_id: str, text: str, model: str = None) -
     when a valid ElevenLabs key exists. Returns {provider, voice, audio_url, reason, error}.
     Pass `model` to override the org's ElevenLabs model (e.g. a fast real-time model for live calls)."""
     selection = select_tts_provider(org)
-    voice = get_voice(voice_id)
+    voice = get_voice(voice_id, org)
     integ = (org or {}).get("integrations", {})
     key = integ.get("elevenlabs_api_key") or os.environ.get("ELEVENLABS_API_KEY", "")
 

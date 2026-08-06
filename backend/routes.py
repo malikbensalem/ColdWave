@@ -791,14 +791,28 @@ async def list_voices(user: dict = Depends(get_current_user)):
             "dynamic": bool(ov.get("dynamic", False)),
             "customized": bool(ov.get("name") or ov.get("persona") or ov.get("speed") or ov.get("dynamic") or ov.get("stability") is not None),
         })
+    # Append the user's custom ElevenLabs voice (if pasted in Settings).
+    custom_id = (integ.get("elevenlabs_custom_voice_id") or "").strip()
+    if custom_id:
+        ov = overrides.get("custom", {})
+        voices.append({
+            "id": "custom", "name": integ.get("elevenlabs_custom_voice_name") or "Custom voice",
+            "gender": integ.get("elevenlabs_custom_voice_gender") or "female", "accent": "Custom",
+            "description": "Your custom ElevenLabs voice (from your account).",
+            "persona": ov.get("persona", ""), "elevenlabs_voice_id": custom_id,
+            "display_name": ov.get("name") or integ.get("elevenlabs_custom_voice_name") or "Custom voice",
+            "speed": ov.get("speed", 1.0), "stability": ov.get("stability", 0.5),
+            "style": ov.get("style", 0.0), "dynamic": bool(ov.get("dynamic", False)),
+            "is_custom": True, "customized": False,
+        })
     return {"voices": voices, "elevenlabs_enabled": enabled}
 
 
 @router.put("/voices/{voice_id}/characteristics")
 async def update_voice_characteristics(voice_id: str, req: VoiceCharacteristicsUpdate, user: dict = Depends(require_admin)):
-    if not get_voice(voice_id):
-        raise HTTPException(404, "Voice not found")
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    if not get_voice(voice_id, org):
+        raise HTTPException(404, "Voice not found")
     chars = (org or {}).get("voice_characteristics", {})
     cur = chars.get(voice_id, {})
     if req.name is not None:
