@@ -162,16 +162,26 @@ class OrgUpdateRequest(BaseModel):
 
 # ---------- CRM ----------
 class ContactCreate(BaseModel):
-    name: str
+    name: Optional[str] = ""
+    first_name: Optional[str] = ""
+    last_name: Optional[str] = ""
     phone: str
     email: Optional[str] = ""
     company: Optional[str] = ""
     notes: Optional[str] = ""
     consent: bool = False
+    status: Optional[str] = "new"
+    lead_status: Optional[str] = ""
+    lead_owner: Optional[str] = ""
+    lead_owner_alias: Optional[str] = ""
+    lead_source: Optional[str] = ""
+    hs_traffic_category: Optional[str] = ""
 
 
 class ContactUpdate(BaseModel):
     name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     company: Optional[str] = None
@@ -180,6 +190,11 @@ class ContactUpdate(BaseModel):
     consent: Optional[bool] = None
     callback_at: Optional[str] = None
     callback_type: Optional[Literal["ai", "human"]] = None
+    lead_status: Optional[str] = None
+    lead_owner: Optional[str] = None
+    lead_owner_alias: Optional[str] = None
+    lead_source: Optional[str] = None
+    hs_traffic_category: Optional[str] = None
 
 
 # ---------- Scripts ----------

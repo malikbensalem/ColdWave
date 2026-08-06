@@ -235,10 +235,17 @@ async def list_contacts(user: dict = Depends(get_current_user), status: str = Qu
 @router.post("/contacts")
 async def create_contact(req: ContactCreate, user: dict = Depends(get_current_user)):
     dnc = await db.dnc_list.find_one({"org_id": user["org_id"], "phone": req.phone})
+    name = (req.name or "").strip() or " ".join(x for x in [(req.first_name or "").strip(), (req.last_name or "").strip()] if x).strip()
+    if not name:
+        raise HTTPException(400, "Please provide a name or first/last name.")
     doc = {
-        "id": new_id("contact"), "org_id": user["org_id"], "name": req.name, "phone": req.phone,
+        "id": new_id("contact"), "org_id": user["org_id"], "name": name,
+        "first_name": req.first_name or "", "last_name": req.last_name or "", "phone": req.phone,
         "email": req.email or "", "company": req.company or "", "notes": req.notes or "",
-        "consent": req.consent, "status": "dnc" if dnc else "new", "opted_out": bool(dnc),
+        "consent": req.consent, "status": "dnc" if dnc else (req.status or "new"), "opted_out": bool(dnc),
+        "lead_status": req.lead_status or "", "lead_owner": req.lead_owner or "",
+        "lead_owner_alias": req.lead_owner_alias or "", "lead_source": req.lead_source or "",
+        "hs_traffic_category": req.hs_traffic_category or "",
         "sentiment": None, "last_called_at": None, "created_at": now_utc().isoformat(),
     }
     await db.contacts.insert_one(dict(doc))
@@ -399,6 +406,19 @@ async def delete_contact(contact_id: str, user: dict = Depends(get_current_user)
     await db.contacts.delete_one({"id": contact_id, "org_id": user["org_id"]})
     await audit(user["org_id"], user, "delete", entity="contact", entity_id=contact_id, before=before)
     return {"ok": True}
+
+
+@router.post("/contacts/{contact_id}/allow-calling")
+async def allow_calling(contact_id: str, user: dict = Depends(get_current_user)):
+    """Take a lead off the Do-Not-Call list and make them callable again."""
+    contact = await db.contacts.find_one({"id": contact_id, "org_id": user["org_id"]}, {"_id": 0})
+    if not contact:
+        raise HTTPException(404, "Contact not found")
+    await db.dnc_list.delete_many({"org_id": user["org_id"], "phone": contact["phone"]})
+    await db.contacts.update_one({"id": contact_id, "org_id": user["org_id"]},
+                                 {"$set": {"opted_out": False, "status": "new"}})
+    await audit(user["org_id"], user, "allow_calling", contact["phone"], entity="contact", entity_id=contact_id)
+    return await db.contacts.find_one({"id": contact_id}, {"_id": 0})
 
 
 # ---------------- Scripts ----------------
@@ -1161,7 +1181,13 @@ async def add_dnc(req: DNCAddRequest, user: dict = Depends(get_current_user)):
 
 @router.delete("/compliance/dnc/{dnc_id}")
 async def remove_dnc(dnc_id: str, user: dict = Depends(get_current_user)):
+    row = await db.dnc_list.find_one({"id": dnc_id, "org_id": user["org_id"]}, {"_id": 0})
     await db.dnc_list.delete_one({"id": dnc_id, "org_id": user["org_id"]})
+    # Re-enable any matching contact so they can be called again.
+    if row and row.get("phone"):
+        await db.contacts.update_many(
+            {"org_id": user["org_id"], "phone": row["phone"], "status": {"$in": ["dnc", "opted_out"]}},
+            {"$set": {"opted_out": False, "status": "new"}})
     await audit(user["org_id"], user, "dnc_remove", dnc_id)
     return {"ok": True}
 

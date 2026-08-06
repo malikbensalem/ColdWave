@@ -6,7 +6,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { MagnifyingGlass, Plus, Trash, PhoneCall, ShieldSlash, FileText, ChatText, Star, UploadSimple, WarningCircle } from "@phosphor-icons/react";
+import { MagnifyingGlass, Plus, Trash, PhoneCall, ShieldSlash, FileText, ChatText, Star, UploadSimple, WarningCircle, PencilSimple } from "@phosphor-icons/react";
 import { CallMonitor } from "../components/CallMonitor";
 
 const STATUSES = ["all", "new", "contacted", "positive", "callback", "opted_out", "dnc"];
@@ -37,6 +37,12 @@ function hasTranscript(call) {
   return Array.isArray(call?.transcript) && call.transcript.length > 0;
 }
 
+const EMPTY_LEAD = {
+  name: "", first_name: "", last_name: "", phone: "", email: "", company: "", notes: "",
+  consent: false, status: "new", lead_status: "", lead_owner: "", lead_owner_alias: "",
+  lead_source: "", hs_traffic_category: "",
+};
+
 export default function Leads() {
   const [contacts, setContacts] = useState([]);
   const [filter, setFilter] = useState("all");
@@ -50,7 +56,9 @@ export default function Leads() {
   const [callCampaignId, setCallCampaignId] = useState("");
   const [listenIn, setListenIn] = useState(true);
   const [monitorCallId, setMonitorCallId] = useState(null);
-  const [form, setForm] = useState({ name: "", phone: "", email: "", company: "", notes: "", consent: false });
+  const [form, setForm] = useState({ ...EMPTY_LEAD });
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState({ ...EMPTY_LEAD });
   const [cbDate, setCbDate] = useState("");
   const [cbType, setCbType] = useState("human");
   const [importing, setImporting] = useState(false);
@@ -80,8 +88,33 @@ export default function Leads() {
       await api.post("/contacts", form);
       toast.success("Lead added");
       setOpen(false);
-      setForm({ name: "", phone: "", email: "", company: "", notes: "", consent: false });
+      setForm({ ...EMPTY_LEAD });
       load();
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+
+  const startEdit = () => {
+    setEditForm({ ...EMPTY_LEAD, ...Object.fromEntries(Object.keys(EMPTY_LEAD).map((k) => [k, detail[k] ?? EMPTY_LEAD[k]])) });
+    setEditOpen(true);
+  };
+
+  const saveEdit = async (e) => {
+    e.preventDefault();
+    try {
+      await api.put(`/contacts/${detail.id}`, editForm);
+      toast.success("Lead updated");
+      setEditOpen(false);
+      load();
+      openDetail(detail.id);
+    } catch (err) { toast.error(apiErr(err)); }
+  };
+
+  const allowCalling = async () => {
+    try {
+      await api.post(`/contacts/${detail.id}/allow-calling`);
+      toast.success("Removed from Do Not Call — you can call them now");
+      load();
+      openDetail(detail.id);
     } catch (err) { toast.error(apiErr(err)); }
   };
 
@@ -182,14 +215,7 @@ export default function Leads() {
           <DialogContent>
             <DialogHeader><DialogTitle className="font-display">New Lead</DialogTitle></DialogHeader>
             <form onSubmit={create} className="space-y-3">
-              <Inp label="Name" testid="lead-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-              <Inp label="Phone" testid="lead-phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} required />
-              <Inp label="Email" testid="lead-email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-              <Inp label="Company" testid="lead-company" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} />
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" data-testid="lead-consent" checked={form.consent} onChange={(e) => setForm({ ...form, consent: e.target.checked })} />
-                Prior marketing consent on record (GDPR)
-              </label>
+              <LeadFields form={form} setForm={setForm} prefix="lead" />
               <DialogFooter>
                 <button data-testid="save-lead-button" type="submit" className="h-10 px-4 bg-primary text-primary-foreground rounded-sm text-sm font-medium">Save Lead</button>
               </DialogFooter>
@@ -376,7 +402,12 @@ export default function Leads() {
                     className="flex-1 inline-flex items-center justify-center gap-1.5 h-9 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 disabled:opacity-40">
                     <PhoneCall size={15} weight="fill" /> {dialing === detail.id ? "Calling…" : "Call"}
                   </button>
-                  <button data-testid="dnc-lead-button" onClick={() => addDnc(detail.phone)} className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-sm font-medium hover:bg-destructive/10"><ShieldSlash size={15} weight="bold" /> DNC</button>
+                  <button data-testid="edit-lead-button" onClick={startEdit} className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-sm border border-border text-sm font-medium hover:bg-accent"><PencilSimple size={15} weight="bold" /> Edit</button>
+                  {(detail.opted_out || detail.status === "opted_out" || detail.status === "dnc") ? (
+                    <button data-testid="allow-calling-button" onClick={allowCalling} className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-sm border border-success/40 text-success text-sm font-medium hover:bg-success/10"><PhoneCall size={15} weight="bold" /> Allow calling</button>
+                  ) : (
+                    <button data-testid="dnc-lead-button" onClick={() => addDnc(detail.phone)} className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-sm border border-destructive/40 text-destructive text-sm font-medium hover:bg-destructive/10"><ShieldSlash size={15} weight="bold" /> DNC</button>
+                  )}
                   <button data-testid="delete-lead-button" onClick={() => remove(detail.id)} className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-sm border border-border text-muted-foreground text-sm hover:bg-accent"><Trash size={15} weight="bold" /></button>
                 </div>
               </div>
@@ -415,6 +446,19 @@ export default function Leads() {
       </Dialog>
 
       <CallMonitor callId={monitorCallId} onClose={() => setMonitorCallId(null)} onEnded={load} />
+
+      {/* Edit lead */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent data-testid="edit-lead-dialog">
+          <DialogHeader><DialogTitle className="font-display">Edit Lead</DialogTitle></DialogHeader>
+          <form onSubmit={saveEdit} className="space-y-3">
+            <LeadFields form={editForm} setForm={setEditForm} prefix="edit-lead" />
+            <DialogFooter>
+              <button data-testid="save-edit-lead-button" type="submit" className="h-10 px-4 bg-primary text-primary-foreground rounded-sm text-sm font-medium">Save changes</button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Summary / Transcript viewer */}
       <Dialog open={!!viewer} onOpenChange={(o) => !o && setViewer(null)}>
@@ -469,6 +513,50 @@ function Inp({ label, testid, ...rest }) {
     <div>
       <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">{label}</label>
       <input data-testid={testid} {...rest} className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+    </div>
+  );
+}
+function LeadFields({ form, setForm, prefix }) {
+  const s = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  return (
+    <div className="space-y-3 max-h-[62vh] overflow-y-auto pr-1">
+      <div className="grid grid-cols-2 gap-3">
+        <Inp label="First name" testid={`${prefix}-first`} value={form.first_name || ""} onChange={s("first_name")} />
+        <Inp label="Last name" testid={`${prefix}-last`} value={form.last_name || ""} onChange={s("last_name")} />
+      </div>
+      <Inp label="Full name (optional if first/last set)" testid={`${prefix}-name`} value={form.name || ""} onChange={s("name")} />
+      <div className="grid grid-cols-2 gap-3">
+        <Inp label="Phone" testid={`${prefix}-phone`} value={form.phone || ""} onChange={s("phone")} required />
+        <Inp label="Email" testid={`${prefix}-email`} value={form.email || ""} onChange={s("email")} />
+      </div>
+      <Inp label="Company" testid={`${prefix}-company`} value={form.company || ""} onChange={s("company")} />
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Pipeline status</label>
+          <select data-testid={`${prefix}-status`} value={form.status || "new"} onChange={s("status")}
+            className="mt-1 flex h-10 w-full rounded-sm border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            {["new", "contacted", "positive", "callback", "opted_out"].map((o) => <option key={o} value={o}>{o === "opted_out" ? "Opted out" : o.charAt(0).toUpperCase() + o.slice(1)}</option>)}
+          </select>
+        </div>
+        <Inp label="Lead status" testid={`${prefix}-lead-status`} value={form.lead_status || ""} onChange={s("lead_status")} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Inp label="Lead owner" testid={`${prefix}-lead-owner`} value={form.lead_owner || ""} onChange={s("lead_owner")} />
+        <Inp label="Owner alias" testid={`${prefix}-owner-alias`} value={form.lead_owner_alias || ""} onChange={s("lead_owner_alias")} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Inp label="Lead source" testid={`${prefix}-lead-source`} value={form.lead_source || ""} onChange={s("lead_source")} />
+        <Inp label="Traffic category" testid={`${prefix}-traffic`} value={form.hs_traffic_category || ""} onChange={s("hs_traffic_category")} />
+      </div>
+      <div>
+        <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Notes</label>
+        <textarea data-testid={`${prefix}-notes`} value={form.notes || ""} onChange={s("notes")} rows={3}
+          className="mt-1 flex w-full rounded-sm border border-input bg-card px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+      </div>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" data-testid={`${prefix}-consent`} checked={!!form.consent} onChange={(e) => setForm({ ...form, consent: e.target.checked })} />
+        Prior marketing consent on record (GDPR)
+      </label>
     </div>
   );
 }

@@ -119,6 +119,19 @@ function IntegrationsTab() {
   };
 
   const PROVIDER_KEY = { openai: "openai_api_key", anthropic: "anthropic_api_key", gemini: "gemini_api_key" };
+  const [customBusy, setCustomBusy] = useState(false);
+  const previewCustomVoice = async () => {
+    const id = (data.elevenlabs_custom_voice_id || "").trim();
+    if (!id) { toast.error("Paste an ElevenLabs Voice ID first."); return; }
+    setCustomBusy(true);
+    try {
+      await save(); // persist so the backend can resolve the custom voice
+      const r = await api.post("/voices/preview", { voice_id: "custom", text: "Hi, this is your custom ElevenLabs voice on ColdWave." });
+      if (r.data.audio_url) { new Audio(r.data.audio_url).play(); toast.success("Playing your custom voice."); }
+      else { toast.error(r.data.error ? `Preview failed: ${r.data.error}` : "No audio — enable ElevenLabs (valid key) and check the Voice ID."); }
+    } catch (e) { toast.error(apiErr(e)); }
+    finally { setCustomBusy(false); }
+  };
   const validateLlm = async (auto = false) => {
     setLlmBusy(true); setLlmStatus(null);
     try {
@@ -268,6 +281,14 @@ function IntegrationsTab() {
             <F label="Display name" testid="eleven-custom-voice-name" value={data.elevenlabs_custom_voice_name || ""} onChange={set("elevenlabs_custom_voice_name")} placeholder="e.g. My Brand Voice" />
             <Sel label="Gender" testid="eleven-custom-voice-gender" value={data.elevenlabs_custom_voice_gender || "female"} onChange={set("elevenlabs_custom_voice_gender")} options={[{ value: "female", label: "Female" }, { value: "male", label: "Male" }]} />
           </div>
+          <div className="flex items-center gap-2">
+            <button data-testid="preview-custom-voice" onClick={previewCustomVoice} disabled={customBusy}
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-sm bg-primary text-primary-foreground text-xs font-semibold hover:opacity-90 disabled:opacity-50">
+              {customBusy ? "Loading…" : "Save & preview custom voice"}
+            </button>
+            <span className="text-[11px] text-muted-foreground">Saves the Voice ID, then plays a sample using your ElevenLabs key.</span>
+          </div>
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-sm px-2 py-1.5">For <b>live Twilio calls</b>, custom/cloned voices also require your ElevenLabs API key to be linked in the Twilio Console (Voice → TTS providers). Previews & test calls work with the key saved here.</p>
         </div>
         <p className="text-xs text-muted-foreground">Paste a key and it validates automatically — if valid, voices are enabled and saved. Test calls then use ElevenLabs audio (no silent fallback).</p>
       </Section>
