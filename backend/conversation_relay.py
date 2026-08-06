@@ -37,10 +37,19 @@ AGENT_CLOSE = ("goodbye", "good bye", "have a great day", "have a lovely day", "
                "bye for now", "speak soon", "we'll be in touch", "i'll let you go", "enjoy the rest of your day")
 OPTOUT_HINTS = ("not interested", "opt out", "opt-out", "stop calling", "do not call",
                 "remove me", "take me off", "don't call me")
-# STT hints (comma-separated) — likely cold-call phrases to boost recognition accuracy.
-_COMMON_HINTS = ("yes,no,maybe,not interested,tell me more,who is this,who's this,how did you get my number,"
-                 "how much,pricing,cost,send me an email,email me,call me back,call back,not a good time,"
-                 "busy right now,remove me,take me off your list,speak to a manager,no thank you,goodbye,hello")
+# STT hints (comma-separated) — likely cold-call phrases + restaurant/Flipdish/sales vocabulary
+# passed to ConversationRelay to bias speech recognition toward the right words.
+_COMMON_HINTS = (
+    "yes,no,maybe,not interested,tell me more,who is this,who's this,how did you get my number,"
+    "how much,pricing,cost,commission,send me an email,email me,call me back,call back,not a good time,"
+    "busy right now,remove me,take me off your list,speak to a manager,no thank you,goodbye,hello,"
+    # Flipdish / restaurant / hospitality
+    "Flipdish,online ordering,order online,boosting orders,boost orders,increase orders,more orders,"
+    "point of sale,POS,kiosk,self-service kiosk,QR code ordering,table ordering,click and collect,"
+    "collection,delivery,takeaway,menu,loyalty,loyalty programme,app,mobile app,website,branded app,"
+    "average order value,food cost,margins,commission fees,third party apps,Just Eat,Deliveroo,Uber Eats,"
+    "restaurant,cafe,takeaway shop,chain,franchise,covers,footfall,revenue,sales,upsell,repeat customers"
+)
 _SENTENCE_END = re.compile(r'[.!?…]+["\')\]]*(\s|$)')
 
 
@@ -188,7 +197,8 @@ def build_conversation_relay_router():
         await ws.accept()
         # Connection-scoped cache — loaded once on setup, no DB reads on the hot path.
         ctx = {"loaded": False, "org": None, "transcript": [], "call": None}
-        state = {"task": None}
+        state = {"task": None, "pending": "", "speaking": False, "last_activity": time.monotonic(),
+                 "nudged": False, "closing": False, "silence_task": None}
 
         async def _load():
             call = await db.calls.find_one({"id": call_id}, {"_id": 0})
@@ -250,67 +260,104 @@ def build_conversation_relay_router():
             said = (said or "").strip()
             if not said or not ctx["loaded"]:
                 return
-            call = ctx["call"]
-            ctx["transcript"].append({"role": "prospect", "content": said, "ts": _now()})
-            integ = (ctx["org"] or {}).get("integrations", {})
-            chunking = integ.get("llm_chunking", True)
-
-            t0 = time.time()
-            first_at = None
-            parts = []
-            buffer = ""
-
-            async def _send(txt):
-                await ws.send_text(json.dumps({"type": "text", "token": txt, "last": False}))
-
+            state["speaking"] = True
+            state["nudged"] = False
             try:
-                async for chunk in stream_agent_reply(
-                    call.get("script_content", ""), ctx["transcript"], said, session_id=call_id,
-                    script_type=call.get("script_type", "line_by_line"),
-                    personality=call.get("personality", ""),
-                    company_overview=call.get("company_overview", ""), org=ctx["org"], brief=True):
-                    if not chunk:
-                        continue
-                    if first_at is None:
-                        first_at = time.time() - t0
-                    parts.append(chunk)
-                    if chunking:
-                        # Emit complete sentences so long replies are spoken naturally
-                        # (Twilio TTS gets whole clauses, not fragmented tokens).
-                        buffer += chunk
-                        while True:
-                            m = _SENTENCE_END.search(buffer)
-                            if not m:
-                                break
-                            sentence = buffer[:m.end()].strip()
-                            buffer = buffer[m.end():]
-                            if sentence:
-                                await _send(sentence)
-                    else:
-                        await _send(chunk)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.error(f"relay stream_agent_reply failed: {e}")
-            if chunking and buffer.strip():
-                await _send(buffer.strip())
-            reply = ("".join(parts)).strip()
-            if not reply:
-                reply = "Sorry, could you say that again?"
-                await _send(reply)
-            await ws.send_text(json.dumps({"type": "text", "token": "", "last": True}))
-            logger.info(f"relay turn {call_id}: first_token={(first_at or 0):.2f}s full={time.time()-t0:.2f}s len={len(reply)}")
+                call = ctx["call"]
+                ctx["transcript"].append({"role": "prospect", "content": said, "ts": _now()})
+                integ = (ctx["org"] or {}).get("integrations", {})
+                chunking = integ.get("llm_chunking", True)
 
-            ctx["transcript"].append({"role": "agent", "content": reply, "ts": _now()})
-            await _persist_transcript()
+                t0 = time.time()
+                first_at = None
+                parts = []
+                buffer = ""
 
-            # End the call ONLY when the agent clearly signs off, or the prospect explicitly opts out.
-            optout = any(k in said.lower() for k in OPTOUT_HINTS)
-            agent_goodbye = any(h in reply.lower() for h in AGENT_CLOSE)
-            ending = optout or agent_goodbye
-            if ending:
-                await asyncio.sleep(0.3)
-                await ws.send_text(json.dumps({"type": "end"}))
+                async def _send(txt):
+                    await ws.send_text(json.dumps({"type": "text", "token": txt, "last": False}))
+
+                try:
+                    async for chunk in stream_agent_reply(
+                        call.get("script_content", ""), ctx["transcript"], said, session_id=call_id,
+                        script_type=call.get("script_type", "line_by_line"),
+                        personality=call.get("personality", ""),
+                        company_overview=call.get("company_overview", ""), org=ctx["org"], brief=True):
+                        if not chunk:
+                            continue
+                        if first_at is None:
+                            first_at = time.time() - t0
+                        parts.append(chunk)
+                        if chunking:
+                            buffer += chunk
+                            while True:
+                                m = _SENTENCE_END.search(buffer)
+                                if not m:
+                                    break
+                                sentence = buffer[:m.end()].strip()
+                                buffer = buffer[m.end():]
+                                if sentence:
+                                    await _send(sentence)
+                        else:
+                            await _send(chunk)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"relay stream_agent_reply failed: {e}")
+                if chunking and buffer.strip():
+                    await _send(buffer.strip())
+                reply = ("".join(parts)).strip()
+                if not reply:
+                    reply = "Sorry, could you say that again?"
+                    await _send(reply)
+                await ws.send_text(json.dumps({"type": "text", "token": "", "last": True}))
+                logger.info(f"relay turn {call_id}: first_token={(first_at or 0):.2f}s full={time.time()-t0:.2f}s len={len(reply)}")
+
+                ctx["transcript"].append({"role": "agent", "content": reply, "ts": _now()})
+                await _persist_transcript()
+
+                # End the call ONLY when the agent clearly signs off, or the prospect explicitly opts out.
+                optout = any(k in said.lower() for k in OPTOUT_HINTS)
+                agent_goodbye = any(h in reply.lower() for h in AGENT_CLOSE)
+                if optout or agent_goodbye:
+                    state["closing"] = True
+                    await asyncio.sleep(0.3)
+                    await ws.send_text(json.dumps({"type": "end"}))
+            finally:
+                state["speaking"] = False
+                state["last_activity"] = time.monotonic()
+
+        async def _silence_watch():
+            """End the call only after the prospect has been silent beyond the configured timeout —
+            one gentle nudge first, then a polite goodbye. Never ends mid-utterance or mid-reply."""
+            integ = (ctx["org"] or {}).get("integrations", {})
+            try:
+                silence = int(integ.get("relay_silence_seconds", 30))
+            except Exception:
+                silence = 30
+            silence = max(10, silence)
+            while True:
+                await asyncio.sleep(2)
+                if state["closing"]:
+                    return
+                if state["speaking"] or (state["task"] and not state["task"].done()):
+                    continue
+                idle = time.monotonic() - state["last_activity"]
+                if not state["nudged"] and idle >= silence:
+                    state["nudged"] = True
+                    state["last_activity"] = time.monotonic()
+                    try:
+                        await ws.send_text(json.dumps({"type": "text", "token": "Are you still there?", "last": True}))
+                    except Exception:
+                        return
+                elif state["nudged"] and idle >= silence:
+                    state["closing"] = True
+                    try:
+                        await ws.send_text(json.dumps({"type": "text", "token": "No problem, I'll let you go. Thanks for your time, goodbye.", "last": True}))
+                        await asyncio.sleep(0.6)
+                        await ws.send_text(json.dumps({"type": "end"}))
+                    except Exception:
+                        pass
+                    return
 
         try:
             while True:
@@ -325,16 +372,30 @@ def build_conversation_relay_router():
                     ok = await _load()
                     if ok:
                         asyncio.ensure_future(_warmup())
+                        state["last_activity"] = time.monotonic()
+                        state["silence_task"] = asyncio.create_task(_silence_watch())
                         await db.calls.update_one({"id": call_id}, {"$set": {
                             "status": "in_progress", "provider_call_sid": msg.get("callSid"),
                             "relay_session": msg.get("sessionId"), "updated_at": _now()}})
 
                 elif mtype == "prompt":
+                    # Barge-in: stop any in-flight reply the moment the caller speaks.
                     if state["task"] and not state["task"].done():
                         state["task"].cancel()
-                    state["task"] = asyncio.create_task(_handle_prompt(msg.get("voicePrompt", "")))
+                    state["last_activity"] = time.monotonic()
+                    state["nudged"] = False
+                    # Accumulate partial transcripts; only respond once the caller has FINISHED
+                    # (last=true) so we don't talk over them or answer a half-heard sentence.
+                    txt = (msg.get("voicePrompt") or "").strip()
+                    if txt:
+                        state["pending"] = (state["pending"] + " " + txt).strip()
+                    if msg.get("last", True) and state["pending"]:
+                        said = state["pending"]
+                        state["pending"] = ""
+                        state["task"] = asyncio.create_task(_handle_prompt(said))
 
                 elif mtype == "interrupt":
+                    state["last_activity"] = time.monotonic()
                     if state["task"] and not state["task"].done():
                         state["task"].cancel()
 
@@ -346,6 +407,8 @@ def build_conversation_relay_router():
         except Exception as e:
             logger.error(f"relay ws exception {call_id}: {e}")
         finally:
+            if state.get("silence_task") and not state["silence_task"].done():
+                state["silence_task"].cancel()
             if state["task"] and not state["task"].done():
                 state["task"].cancel()
             await _finalise()

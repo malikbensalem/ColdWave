@@ -104,11 +104,11 @@ LLM_MODELS = {
                "gpt-4o", "gpt-4.1", "gpt-4.1-mini", "o3", "o4-mini"],
     "anthropic": ["claude-sonnet-4-6", "claude-opus-4-8", "claude-opus-4-7", "claude-haiku-4-5-20251001",
                   "claude-sonnet-4-5-20250929"],
-    "gemini": ["gemini-2.5-flash-lite", "gemini-3.5-flash", "gemini-3-flash-preview",
-               "gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash"],
+    "gemini": ["gemini-2.5-flash", "gemini-3-flash-preview", "gemini-3.5-flash",
+               "gemini-3.1-pro-preview", "gemini-2.5-pro"],
 }
 PROVIDER_KEY_FIELD = {"openai": "openai_api_key", "anthropic": "anthropic_api_key", "gemini": "gemini_api_key"}
-DEFAULT_MODEL = {"openai": "gpt-5.4", "anthropic": "claude-sonnet-4-6", "gemini": "gemini-2.5-flash-lite"}
+DEFAULT_MODEL = {"openai": "gpt-5.4", "anthropic": "claude-sonnet-4-6", "gemini": "gemini-2.5-flash"}
 
 
 def get_llm_models():
@@ -261,7 +261,17 @@ def _agent_system_and_prompt(script, history, prospect_message, script_type, per
         "If the prospect asks to be removed, says 'not interested', 'stop calling', 'opt out', or "
         "'do not call', you MUST immediately, politely confirm you will remove them and end the call. "
         "Never use misleading claims. Keep responses short and human, like real speech. "
-        "Output ONLY the agent's spoken words."
+        "Output ONLY the agent's spoken words.\n\n"
+        "IMPORTANT — the prospect's words are transcribed live by speech-to-text and may contain "
+        "recognition errors, especially restaurant, hospitality and sales terms. Interpret by MEANING "
+        "and context, not literally, and silently correct obvious mishears (e.g. 'basting orders' → "
+        "'boosting orders', 'flip dish'/'flip fish' → 'Flipdish', 'point of scale' → 'point of sale', "
+        "'online audience' → 'online ordering'). "
+        "Use the FULL conversation so far — never ask for something the prospect has already told you, "
+        "and acknowledge what they meant. "
+        "If a message is genuinely unclear, garbled, or you are NOT confident what they meant, ask ONE "
+        "short clarifying question (e.g. 'Sorry, did you mean boosting your orders?') instead of "
+        "answering the wrong interpretation."
     )
     if brief:
         n = max(1, int(max_sentences or 2))
