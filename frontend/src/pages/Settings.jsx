@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import api, { apiErr } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { applyBranding, applyPrimaryColor } from "../lib/branding";
+import { playAudio } from "../lib/voice";
 import RolesManager from "../components/RolesManager";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
@@ -96,6 +97,17 @@ function IntegrationsTab() {
   const [inworldStatus, setInworldStatus] = useState(null);
   const [inworldBusy, setInworldBusy] = useState(false);
   const [inworldVoices, setInworldVoices] = useState([]);
+  const [inworldPreviewBusy, setInworldPreviewBusy] = useState(false);
+  const previewInworld = async () => {
+    if (!data.inworld_tts_voice_id) { toast.error("Select an Inworld voice first."); return; }
+    setInworldPreviewBusy(true);
+    try {
+      const r = await api.post("/inworld/preview", { voice_id: data.inworld_tts_voice_id });
+      if (r.data.audio_url) playAudio(r.data.audio_url);
+      else toast.error(r.data.error ? `Preview failed: ${r.data.error}` : "No audio — check your Inworld key and voice.");
+    } catch (e) { toast.error(apiErr(e)); }
+    finally { setInworldPreviewBusy(false); }
+  };
   const testTelnyx = async () => {
     setTelnyxBusy(true); setTelnyxStatus(null);
     try {
@@ -301,6 +313,9 @@ function IntegrationsTab() {
             <button type="button" onClick={() => { navigator.clipboard?.writeText(`${webhookBase}/api/telephony/telnyx/webhook`); toast.success("Webhook URL copied"); }} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent shrink-0">Copy</button>
           </div>
           <p className="text-[11px] text-muted-foreground mt-1.5">Set this as the webhook on your Telnyx <b>Call Control application</b>, then select <b>Telnyx</b> in “Telephony provider” above. Answering-machine detection is enabled automatically to skip voicemail.</p>
+          {data.telephony_provider === "telnyx" && !(data.inworld_api_key && data.inworld_stt_enabled) && (
+            <p data-testid="telnyx-stt-warning" className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-sm px-2 py-1.5 mt-2">Heads up: two-way conversation on Telnyx needs <b>Inworld STT</b> to hear the prospect. Add your Inworld key and turn on <b>“Enable Inworld STT”</b> below — otherwise the AI plays the greeting but can’t respond when they talk.</p>
+          )}
         </div>
       </Section>
 
@@ -373,6 +388,7 @@ function IntegrationsTab() {
           <Toggle testid="inworld-stt-enabled" label="Enable Inworld STT" checked={data.inworld_stt_enabled} onChange={set("inworld_stt_enabled")} />
           <Toggle testid="inworld-enabled" label="Enable Inworld TTS" checked={data.inworld_enabled} onChange={set("inworld_enabled")} />
           <button data-testid="test-inworld-button" onClick={testInworld} disabled={inworldBusy} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">{inworldBusy ? "Testing…" : "Test key"}</button>
+          <button data-testid="preview-inworld-voice" onClick={previewInworld} disabled={inworldPreviewBusy || !data.inworld_tts_voice_id} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">{inworldPreviewBusy ? "Loading…" : "Preview voice"}</button>
           <button data-testid="save-inworld-button" onClick={() => save()} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent">Save</button>
         </div>
         {inworldStatus && <p className={`text-xs ${inworldStatus.valid ? "text-success" : "text-destructive"}`}>{inworldStatus.valid ? "API key valid ✓" : (inworldStatus.error || "Invalid")}</p>}

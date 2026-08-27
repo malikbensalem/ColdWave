@@ -156,6 +156,31 @@ def test_telephony_tts_browser_has_no_audio():
     assert res["audio_b64"] is None and res["error"]
 
 
+def test_telephony_tts_elevenlabs_selected_but_no_voice_errors_no_network():
+    # ElevenLabs is the resolved provider, but no voice id is configured -> clear error, no network.
+    org = {"id": "o4", "integrations": {"tts_stt_provider": "elevenlabs",
+                                        "elevenlabs_api_key": "k", "elevenlabs_enabled": True}}
+    res = asyncio.get_event_loop().run_until_complete(
+        I.generate_tts_telephony(org, "hello", voice_id=None, use_cache=False))
+    assert res["provider"] == "elevenlabs_error" and res["audio_b64"] is None and res["error"]
+
+
+def test_telephony_tts_inworld_selected_but_no_key_errors_no_network():
+    # Inworld is the resolved provider only when keyed; without a key select falls through, and
+    # generate_tts_inworld itself guards against a missing key without any network call.
+    res = asyncio.get_event_loop().run_until_complete(
+        I.generate_tts_inworld({"id": "o5", "integrations": {}}, "hello", use_cache=False))
+    assert res["provider"] == "inworld_error" and res["audio_b64"] is None and "key" in res["error"].lower()
+
+
+def test_telephony_tts_no_provider_configured_errors():
+    # No TTS provider at all -> generate_tts_telephony returns a helpful 'choose Inworld or ElevenLabs' error.
+    org = {"id": "o6", "integrations": {}}  # resolves to browser -> no telephony audio
+    res = asyncio.get_event_loop().run_until_complete(
+        I.generate_tts_telephony(org, "hello", use_cache=False))
+    assert res["audio_b64"] is None and res["error"]
+
+
 def test_voices_shape_normalization_inworld_vs_elevenlabs():
     # Inworld voices normalize to the same keys the ElevenLabs catalog exposes to the UI.
     iw = {"voiceId": "Ashley", "displayName": "Ashley", "langCode": "en-US"}
@@ -164,3 +189,45 @@ def test_voices_shape_normalization_inworld_vs_elevenlabs():
     el = I.VOICE_CATALOG[0]
     for key in ("id", "name", "gender", "accent"):
         assert key in normalized and key in el
+
+
+# ---------------- 6. Inworld preview WAV wrapper ----------------
+def test_pcm16_to_wav_b64_has_valid_header():
+    import base64 as b64, struct
+    pcm = b"\x01\x02" * 100  # 200 bytes of fake LINEAR16
+    wav_b64 = I._pcm16_to_wav_b64(b64.b64encode(pcm).decode(), 24000)
+    raw = b64.b64decode(wav_b64)
+    assert raw[:4] == b"RIFF" and raw[8:12] == b"WAVE" and raw[12:16] == b"fmt "
+    # sample rate stored little-endian at byte offset 24
+    assert struct.unpack("<I", raw[24:28])[0] == 24000
+    # data chunk carries the original PCM bytes
+    assert raw[44:] == pcm
+
+
+# ---------------- 7. streaming_start uses inbound_track + bidirectional PCMU ----------------
+def test_streaming_start_params():
+    import telnyx_voice as TV
+    captured = {}
+
+    async def fake_command(api_key, ccid, action, payload):
+        captured["action"] = action
+        captured["payload"] = payload
+        class R:  # minimal response stub
+            status_code = 200
+            text = "{}"
+        return R()
+
+    orig = TV.telnyx_command
+    TV.telnyx_command = fake_command
+    try:
+        asyncio.get_event_loop().run_until_complete(
+            TV._start_media_stream({"telnyx_api_key": "k"}, "ccid123", "call1"))
+    finally:
+        TV.telnyx_command = orig
+    p = captured["payload"]
+    assert captured["action"] == "streaming_start"
+    assert p["stream_track"] == "inbound_track"          # only the callee -> STT (no self-echo)
+    assert p["stream_bidirectional_mode"] == "rtp"
+    assert p["stream_bidirectional_codec"] == "PCMU"
+    assert p["stream_bidirectional_target_legs"] == "opposite"  # play TTS to the remote party
+    assert p["stream_url"].endswith("/api/telephony/telnyx/media/call1")

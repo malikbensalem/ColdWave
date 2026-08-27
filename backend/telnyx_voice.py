@@ -119,11 +119,15 @@ def validate_telnyx_signature(raw: bytes, headers, public_key: str, max_age: int
 async def _start_media_stream(integ: dict, ccid: str, call_id: str):
     key = integ.get("telnyx_api_key") or os.environ.get("TELNYX_API_KEY", "")
     ws_base = public_base_url().replace("https://", "wss://").replace("http://", "ws://")
-    await telnyx_command(key, ccid, "streaming_start", {
-        "stream_url": f"{ws_base}/api/telephony/telnyx/media/{call_id}",
-        "stream_track": "both_tracks", "stream_bidirectional_mode": "rtp",
+    stream_url = f"{ws_base}/api/telephony/telnyx/media/{call_id}"
+    # inbound_track = only the CALLEE's audio (so STT doesn't transcribe our own TTS/echo).
+    # bidirectional rtp PCMU 8k = we inject our TTS back to the remote party (opposite leg).
+    r = await telnyx_command(key, ccid, "streaming_start", {
+        "stream_url": stream_url,
+        "stream_track": "inbound_track", "stream_bidirectional_mode": "rtp",
         "stream_bidirectional_codec": "PCMU", "stream_bidirectional_sampling_rate": 8000,
         "stream_bidirectional_target_legs": "opposite", "command_id": str(uuid.uuid4())})
+    logger.info(f"telnyx streaming_start {call_id} ccid={ccid[:12]}… url={stream_url} -> HTTP {r.status_code}: {r.text[:200]}")
 
 
 def build_telnyx_voice_router() -> APIRouter:

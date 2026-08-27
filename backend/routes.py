@@ -24,6 +24,7 @@ from integrations import (
     agent_reply, analyze_transcript, generate_tts, select_tts_provider,
     validate_elevenlabs_key, generate_kb_opening, generate_opening_line, get_llm_models, validate_llm_key, llm_config,
     get_elevenlabs_models, inworld_ping, inworld_list_voices,
+    generate_tts_inworld, _pcm16_to_wav_b64,
 )
 from audit import record_audit
 from kb import get_kb_entries
@@ -953,10 +954,35 @@ async def elevenlabs_models(user: dict = Depends(get_current_user)):
 @router.post("/voices/preview")
 async def voice_preview(req: VoicePreviewRequest, user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    # When Inworld is the active Voice-AI provider, preview with a real Inworld voice (WAV for browser).
+    if select_tts_provider(org).get("provider") == "inworld":
+        res = await generate_tts_inworld(org, req.text, voice_id=req.voice_id,
+                                         encoding="LINEAR16", sample_rate=24000, use_cache=False)
+        if res.get("audio_b64"):
+            wav = _pcm16_to_wav_b64(res["audio_b64"], 24000)
+            return {"provider": "inworld", "mock": False, "audio_url": f"data:audio/wav;base64,{wav}",
+                    "voice": None, "error": None}
+        return {"provider": "inworld_error", "mock": True, "audio_url": None, "voice": None, "error": res.get("error")}
     result = await generate_tts(org, req.voice_id, req.text)
     # keep backward-compatible shape (mock flag) for the frontend
     result["mock"] = result["provider"] != "elevenlabs"
     return result
+
+
+@router.post("/inworld/preview")
+async def inworld_preview(body: dict = Body(default={}), user: dict = Depends(get_current_user)):
+    """Preview an Inworld voice regardless of the active provider (used in Settings)."""
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    integ = (org or {}).get("integrations", {})
+    voice_id = body.get("voice_id") or integ.get("inworld_tts_voice_id")
+    text = body.get("text") or "Hi, this is a preview of your selected Inworld voice on ColdWave."
+    if not voice_id:
+        return {"audio_url": None, "error": "Select an Inworld voice first."}
+    res = await generate_tts_inworld(org, text, voice_id=voice_id,
+                                     encoding="LINEAR16", sample_rate=24000, use_cache=False)
+    if res.get("audio_b64"):
+        return {"audio_url": f"data:audio/wav;base64,{_pcm16_to_wav_b64(res['audio_b64'], 24000)}", "error": None}
+    return {"audio_url": None, "error": res.get("error")}
 
 
 @router.post("/settings/integrations/elevenlabs/test")
@@ -1481,6 +1507,29 @@ async def integration_balances(user: dict = Depends(require_admin)):
                 item["detail"] = f"Twilio HTTP {r.status_code}."
         except Exception as e:
             item["detail"] = f"Could not reach Twilio: {str(e)[:80]}"
+        out.append(item)
+
+    # Telnyx — account balance.
+    tk = integ.get("telnyx_api_key", "")
+    if tk:
+        item = {"provider": "telnyx", "label": "Telnyx", "unit": "balance", "ok": False, "detail": "", "value": None, "total": None}
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.get("https://api.telnyx.com/v2/balance", headers={"Authorization": f"Bearer {tk}"})
+            if r.status_code == 200:
+                d = r.json().get("data", {})
+                bal, cur = d.get("balance"), d.get("currency", "USD")
+                avail = d.get("available_credit")
+                detail = f"{bal} {cur} balance"
+                if avail is not None:
+                    detail += f" · {avail} {cur} available credit"
+                item.update({"ok": True, "value": f"{bal} {cur}", "detail": detail})
+            elif r.status_code in (401, 403):
+                item["detail"] = "Invalid Telnyx API key."
+            else:
+                item["detail"] = f"Telnyx HTTP {r.status_code}."
+        except Exception as e:
+            item["detail"] = f"Could not reach Telnyx: {str(e)[:80]}"
         out.append(item)
 
     # 3CX — no billing/credit API.

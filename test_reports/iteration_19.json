@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 19 — verified the Telnyx-balance row, the new /api/inworld/preview endpoint, provider-aware /api/voices/preview, and the changed Settings/Campaigns UI. Backend: 40/40 tests pass (12 new API tests in test_iteration19_telnyx_balance_inworld.py, 1 new telnyx-balance-row test, 27/27 existing test_telnyx_inworld.py incl. streaming_start params + WAV header). Live probe of the demo org (tts_stt_provider=elevenlabs, NO telnyx/inworld keys): GET /api/settings/integrations/balances -> 200 {balances:[elevenlabs(ok=false 'Invalid API key.'), 3cx], checked_at} and correctly OMITS the telnyx row; after saving a sentinel telnyx key the telnyx row appears with unit='balance', ok=false, detail='Invalid Telnyx API key.' (no 500) and the original key was restored. POST /api/inworld/preview {voice_id:'Ashley'} -> 200 {audio_url:null, error:'No Inworld API key configured.'} (also for a bogus voice id and for a missing voice_id — never 500, 401 without auth). POST /api/voices/preview {voice_id:'george'} -> 200 with mock=true, provider='elevenlabs_error' (saved EL key is a stale/invalid test key). GET /api/voices -> 200, provider='elevenlabs', 12 voices. Frontend (admin@coldwave.ai login OK): Settings shows data-testid='balances-grid' + 'refresh-balances-button' which refreshes without error; 'preview-inworld-voice' renders and is correctly DISABLED with no voice selected; Campaigns → Voices tab renders 12 voice cards each with preview-voice-<id>, the click works with no crash, 'voices-inworld-note' is absent and the ElevenLabs mock-mode banner is absent (elevenlabs_enabled=true) — matching the provider-aware logic. No page/console errors other than the expected pre-login 401 on /api/auth/me. NOTE: no real Telnyx/Twilio call was placed (impossible in preview), so the live-audio silence fix is only verified at unit level.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "telnyx_relay media WS", "issue": "STT for the Telnyx path is Inworld-only (select_stt_provider). If an org runs Telnyx + ElevenLabs TTS without an Inworld key, the greeting plays but the agent can NEVER respond to the prospect (media events are dropped, only a logger.warning). Requirement 'Telnyx must work with both Inworld TTS and ElevenLabs TTS' is therefore only half met: TTS yes, hearing the prospect no. Surface this in the UI (Settings/Campaign warning) or add a non-Inworld STT."},
+      {"endpoint": "telnyx_relay media WS", "issue": "The greeting is now gated on the Telnyx 'start' event with no timeout/fallback — if 'start' never arrives (stream error, mis-configured connection) the call stays silent forever. Add an asyncio timeout (~3-5s) that logs and greets anyway."},
+      {"endpoint": "telnyx_relay._speak", "issue": "Pacing uses `await asyncio.sleep(0.02)` per 160-byte frame; per-iteration overhead makes playback slower than realtime and drifts on long replies. Use a monotonic deadline (next_send += 0.02) instead."},
+      {"endpoint": "GET /api/settings/integrations", "issue": "STILL returns provider secrets (inworld_api_key, telnyx_public_key, elevenlabs_api_key booleans are returned as real values) to the browser — carried over unfixed from iterations 17/18."},
+      {"endpoint": "demo org data", "issue": "Leftover test pollution from earlier iterations: voice 'george' has display_name 'TEST_George' and persona 'TEST_persona_calm' (visible on the Voices tab card), and twilio_account_sid='ACtest_sentinel_sid'. The saved ElevenLabs key is invalid so the balances card reads 'Invalid API key.' Clean up before demo."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Settings → Inworld (STT + TTS)", "issues": ["'Preview voice' is correctly disabled with no voice selected, but there is no tooltip/hint explaining why — the TTS VOICE select shows 'Test key to load voices', so the disabled state is discoverable but not explained."]},
+      {"screen": "Campaigns → Voices tab", "issues": ["First card title reads 'TEST_George' (stale seeded customization, see backend minor issue) — cosmetic data problem, not a code bug."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration19_telnyx_balance_inworld.py",
+    "/app/backend/tests/test_iteration19_telnyx_balance_row.py",
+    "/app/backend/tests/probe_iter19.py",
+    "/app/test_reports/pytest/iteration19_results.xml"
+  ],
+  "action_items": [
+    "Add a start-event timeout fallback in telnyx_relay so a missing 'start' cannot re-create the silent-call symptom.",
+    "Warn (UI + logs) when Telnyx is the telephony provider and Inworld STT is not configured — otherwise the AI can't hear the prospect even though TTS works.",
+    "Mask secrets in GET /api/settings/integrations (open since iteration 17).",
+    "Clean the demo org: remove TEST_George/TEST_persona_calm voice customization, the sentinel Twilio SID, and the invalid ElevenLabs key (balances card currently shows 'Invalid API key.')."
+  ],
+  "critical_code_review_comments": [
+    "routes.py balances: the telnyx block mirrors elevenlabs/twilio correctly and is skipped when no key exists — verified both branches live. All three blocks are near-identical ~20-line httpx try/except copies; extract a small helper to satisfy DRY.",
+    "/api/inworld/preview returns 200 with {audio_url:null, error} for every failure path (no key, bogus voice, no voice_id) — good graceful degradation; consider also returning the resolved voice_id for UI feedback.",
+    "/api/voices/preview inworld branch wraps LINEAR16 in _pcm16_to_wav_b64 (WAV header unit-tested) and keeps the backward-compatible 'mock' flag on the elevenlabs branch — no shape break for Campaigns.jsx.",
+    "routes.py is 1677 lines — split into routers (voices, settings/integrations, campaigns) per the 700-line guideline."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration19_telnyx_balance_inworld.py (new)",
+    "/app/backend/tests/test_iteration19_telnyx_balance_row.py (new)",
+    "/app/backend/tests/probe_iter19.py (new helper, not pytest-collected)"
+  ],
+  "success_rate": {"backend": "100% (40/40: 12 new API + 1 telnyx-row + 27 telnyx_inworld unit)", "frontend": "100% on scope (login, balances grid + refresh, disabled Inworld preview button, Voices tab 12 cards + preview click, no inworld note / no mock banner as expected)"},
+  "seed_data_creation": "No new records. Temporarily saved telnyx_api_key='KEY_TEST_invalid_telnyx_sentinel' to prove the balance row appears, then restored the original empty value (asserted in fixture teardown).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@coldwave.ai / Admin123! (login returns access_token)",
+  "context_for_next_testing_agent": "Run: cd /app/backend && python -m pytest tests/test_iteration19_telnyx_balance_inworld.py tests/test_iteration19_telnyx_balance_row.py tests/test_telnyx_inworld.py -v -p no:randomly. Demo org state after this run: tts_stt_provider=elevenlabs, NO telnyx/inworld keys, elevenlabs key present but INVALID (so previews return provider='elevenlabs_error', mock=true and the balances card says 'Invalid API key.'). Balances endpoint returns an OBJECT {balances:[...], checked_at}, not a bare list. Frontend login button is get_by_role('button', name='Sign in'); Voices tab is reached by clicking the 'Voices' text tab on /campaigns; preview buttons are [data-testid^='preview-voice-']. Real Telnyx/Twilio calls and the media WebSocket remain untestable in preview.",
+  "rca_of_the_issue": "N/A — no new defect reproduced. The remaining silence risk is architectural: (a) greeting now waits for Telnyx 'start' with no timeout, and (b) Telnyx STT is Inworld-only, so a Telnyx+ElevenLabs org hears the greeting but the agent never replies because inbound media is discarded when no Inworld STT session exists."
+}

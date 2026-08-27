@@ -523,6 +523,7 @@ function VoicesTab() {
   const isAdmin = user?.role === "admin" || user?.role === "owner";
   const [voices, setVoices] = useState([]);
   const [enabled, setEnabled] = useState(false);
+  const [provider, setProvider] = useState("elevenlabs");
   const [playing, setPlaying] = useState(null);
   const [sample, setSample] = useState("Hello, we are calling from ColdWave.");
   const [editVoice, setEditVoice] = useState(null);
@@ -532,6 +533,7 @@ function VoicesTab() {
     const r = await api.get("/voices");
     setVoices(r.data.voices);
     setEnabled(r.data.elevenlabs_enabled);
+    setProvider(r.data.provider || "elevenlabs");
   }, []);
   useEffect(() => { load(); }, [load]);
   useEffect(() => () => stopAll(), []);
@@ -546,9 +548,14 @@ function VoicesTab() {
     try {
       const { data } = await api.post("/voices/preview", { voice_id: v.id, text: sample });
       if (data.mock || !data.audio_url) {
-        speakMock(sample, v.gender);
-        toast.info("Mock preview (browser voice). Add an ElevenLabs key in Settings for studio audio.");
-        setTimeout(() => setPlaying((cur) => (cur === v.id ? null : cur)), Math.min(8000, sample.length * 70));
+        if (provider === "inworld") {
+          toast.error(data.error ? `Inworld preview failed: ${data.error}` : "Inworld preview failed — check your Inworld key/voice in Settings.");
+          setPlaying(null);
+        } else {
+          speakMock(sample, v.gender);
+          toast.info("Mock preview (browser voice). Add an ElevenLabs key in Settings for studio audio.");
+          setTimeout(() => setPlaying((cur) => (cur === v.id ? null : cur)), Math.min(8000, sample.length * 70));
+        }
       } else {
         playAudio(data.audio_url, () => setPlaying(null));
       }
@@ -567,7 +574,8 @@ function VoicesTab() {
 
   return (
     <div className="space-y-4">
-      {!enabled && <div className="text-xs bg-warning/15 border border-warning/40 text-warning-foreground rounded-sm p-2.5">ElevenLabs is in <b>mock mode</b> — previews use your browser's voice. Add an API key in Settings → Integrations for realistic studio audio.</div>}
+      {provider === "elevenlabs" && !enabled && <div className="text-xs bg-warning/15 border border-warning/40 text-warning-foreground rounded-sm p-2.5">ElevenLabs is in <b>mock mode</b> — previews use your browser's voice. Add an API key in Settings → Integrations for realistic studio audio.</div>}
+      {provider === "inworld" && <div data-testid="voices-inworld-note" className="text-xs bg-primary/10 border border-primary/30 text-foreground rounded-sm p-2.5"><b>Inworld</b> is your active Voice AI provider — previews below play real Inworld audio for the voices on your account.</div>}
 
       <div className="bg-card border border-border rounded-sm p-4 space-y-2">
         <label className="text-xs uppercase tracking-[0.15em] font-semibold text-muted-foreground">Sample text to hear</label>

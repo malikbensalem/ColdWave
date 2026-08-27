@@ -497,6 +497,17 @@ async def tts_cache_put(org_id: str, voice_id: str, model: str, text: str, audio
         "created_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
 
 
+def _pcm16_to_wav_b64(pcm_b64: str, sample_rate: int = 24000) -> str:
+    """Wrap raw LINEAR16 PCM (mono 16-bit) in a WAV header for browser <audio> preview."""
+    import base64 as _b64, struct
+    pcm = _b64.b64decode(pcm_b64)
+    n = len(pcm)
+    header = (b"RIFF" + struct.pack("<I", 36 + n) + b"WAVE" + b"fmt " +
+              struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16) +
+              b"data" + struct.pack("<I", n))
+    return _b64.b64encode(header + pcm).decode()
+
+
 async def generate_tts_telephony(org: dict, text: str, voice_id: str = None, use_cache: bool = True) -> dict:
     """Unified 8kHz mu-law TTS for the Telnyx media bridge — branches on the org's selected
     Voice-AI provider (Inworld or ElevenLabs). Returns {provider, audio_b64 (mulaw 8k), cached, error}.

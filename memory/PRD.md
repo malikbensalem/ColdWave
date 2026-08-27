@@ -326,3 +326,30 @@ Audit verdict was FAIL (1 Critical, 2 High, 1 Medium). Fixes applied (nothing re
 - **CRITICAL fix (found+verified by testing agent)**: when a campaign's stored `voice_id` was an ElevenLabs id (e.g. "george") but Inworld was the TTS provider, Inworld returned `status.code=5 Unknown voice` which the recv loop ignored → 20s hang, empty error, silent live calls, warm-cache 502. Now: (a) an ElevenLabs-catalog `voice_id` auto-falls-back to the org's Inworld voice (`inworld_tts_voice_id` or "Ashley"); (b) `result.status.code != 0` is surfaced immediately. Verified: george→Ashley audio in 2.3s; unknown voice → clear error in 2.6s (no hang).
 - **Warm Phrase Cache**: `POST /api/campaigns/{id}/warm-cache` (now backgrounded, returns instantly) + auto-fired on campaign create/update — pre-synthesizes the opening + common static phrases into the TTS cache so the first spoken words are instant. Verified 4/4 warmed → cache HITs on re-run.
 - **Tests**: `tests/test_telnyx_inworld.py` now 24 passing (added provider-selection-for-relay, browser-has-no-telephony-audio, voice-shape normalization). Testing agent iteration_18: **FIXED, 100% on scope**.
+
+
+## Iteration 34 (2026-08-27) — Telnyx live-call silence fix + Inworld previews + Telnyx balance
+- **Silence root causes fixed** (`telnyx_relay.py` + `telnyx_voice.py`), verified against Telnyx's official Media Streaming docs:
+  - **Greeting was sent before the stream was ready** → dropped audio (silence). Relay now waits for Telnyx's `start` event before speaking, with a **4s watchdog fallback** that greets anyway if `start` never arrives (so a mis-configured stream can't cause permanent silence).
+  - **`stream_track` changed `both_tracks` → `inbound_track`** so STT only hears the prospect (not the AI's own TTS echo), fixing self-response/echo loops so the agent replies to the *caller*.
+  - Kept correct Telnyx bidirectional-RTP framing: decode mu-law → 160-byte/20ms PCMU frames, each base64'd; now paced on a **monotonic deadline** (no drift/slow playback on long replies).
+  - Added detailed non-sensitive logging (streaming_start HTTP status, ws connected/start/media_format/error/stop, per-utterance provider+bytes+frames).
+- **Telnyx account balance** now shown in Settings → **Credits & balances** (same place as Twilio/ElevenLabs): `GET /v2/balance` added to `/api/settings/integrations/balances` (unit `balance`; omitted when no key; graceful on invalid key).
+- **Inworld voice previews** work like ElevenLabs: `generate_tts_inworld` LINEAR16 → `_pcm16_to_wav_b64` WAV wrapper → browser `<audio>`. `/api/voices/preview` is now provider-aware (Inworld branch) and new `POST /api/inworld/preview` (forces Inworld, used by Settings' **Preview voice** button, `data-testid='preview-inworld-voice'`).
+- **Campaign → Voices tab** provider-aware: the ElevenLabs "mock mode" banner only shows when provider is ElevenLabs; an Inworld info note (`voices-inworld-note`) shows for Inworld; failed Inworld previews now show a clear Inworld error instead of the ElevenLabs message.
+- **Two-way requirement gap surfaced**: Telnyx STT is Inworld-only, so a Telnyx+ElevenLabs org with **no Inworld key** would hear the greeting but the AI couldn't respond. Added a Settings warning (`telnyx-stt-warning`) prompting the user to enable Inworld STT for two-way conversation.
+- **Demo org cleanup**: removed leftover `TEST_George` voice customization and the sentinel Twilio SID.
+- **Tests**: `tests/test_telnyx_inworld.py` now **26 passing** (+WAV header, +streaming_start params). Testing agent iteration_19: **100% on scope**, no critical issues.
+- ⚠️ **Live audio still requires a real Telnyx call to confirm** (impossible in preview). Code + API + UI verified; awaiting the user's live test call with their credentials.
+
+
+## Iteration 35 (2026-08-27) — Telnyx relay confirmed provider-agnostic (ElevenLabs/Inworld TTS)
+- **Confirmed already implemented** (from iter 33–34): `telnyx_relay.py` is the sole handler of the Telnyx call (media streaming, barge-in, VAD, LLM turn loop, hangup/finalise) and is **not** hardcoded to Inworld:
+  - **TTS** in `_speak()` uses `generate_tts_telephony(org, ...)` → `select_tts_provider(org)` → ElevenLabs (`output_format="ulaw_8000"`) **or** Inworld (`encoding="MULAW"`), both 8kHz mu-law, both Mongo-cached; clear error if neither configured.
+  - **STT** gated via `select_stt_provider(org)` (Inworld Realtime only — ElevenLabs has no streaming STT).
+  - **`provider_path`** written per call already reflects the real combo: `telnyx+{tts_provider}` (`telnyx+elevenlabs` / `telnyx+inworld`). No hardcoded value anywhere.
+  - `telnyx_voice.py` starts the media relay unconditionally on `call.answered`, so both combos run end-to-end.
+- **Single source of truth**: existing `tts_stt_provider` (TTS engine) + `inworld_stt_enabled` (STT) express both combos — "ElevenLabs TTS + Inworld STT" (Voice-AI provider=ElevenLabs, enable Inworld STT) and "Inworld TTS + Inworld STT" (Voice-AI provider=Inworld, enable Inworld STT). **No new toggle added** (would duplicate settings).
+- **Improvements this iteration**: STT-missing case now **fails visibly** — persists `stt_status="disabled"` + a helpful `stt_error` on the call doc (not just a log). Module docstring updated to reflect provider-agnostic design.
+- **Tests**: `tests/test_telnyx_inworld.py` now **29 passing** (+ generate_tts_telephony: ElevenLabs-no-voice → error, Inworld-no-key → error, no-provider → error — all without network).
+- ⚠️ Live audio still requires a real deployed Telnyx call to fully confirm.

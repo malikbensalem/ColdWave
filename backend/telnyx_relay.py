@@ -1,8 +1,10 @@
 """Telnyx media bridge — our own thin STT+TTS relay (parallel to conversation_relay.py).
 
-Pipes Telnyx bidirectional Media Streaming (8kHz PCMU) <-> Inworld Realtime STT + TTS,
-runs the existing LLM (stream_agent_reply), supports barge-in, VAD gating, and TTS caching.
-Cloud-managed APIs only.
+Sole handler of the Telnyx call: bidirectional Media Streaming (8kHz PCMU), barge-in,
+VAD gating, the LLM turn loop (stream_agent_reply), hangup/finalise logic.
+Provider-agnostic per org: TTS via select_tts_provider (ElevenLabs ulaw_8000 OR Inworld
+MULAW, through generate_tts_telephony); STT via select_stt_provider (Inworld Realtime —
+the only streaming STT — or a clear error when none is configured). Cloud-managed APIs only.
 """
 import os
 import json
@@ -67,11 +69,12 @@ def build_telnyx_relay_router() -> APIRouter:
         integ = org.get("integrations", {})
         key = _inworld_key(org)
         tts_provider = select_tts_provider(org).get("provider")
-        stt_provider = select_stt_provider(org).get("provider")
+        stt_sel = select_stt_provider(org)
+        stt_provider = stt_sel.get("provider")
         voice_id = call.get("voice_id")
         sample_rate = 8000 if not _HAS_AUDIOOP else 16000
         transcript = list(call.get("transcript", []) or [])
-        state = {"task": None, "speaking": False, "ended_by": None, "closing": False, "stt": None}
+        state = {"task": None, "speaking": False, "ended_by": None, "closing": False, "stt": None, "started": False}
         logger.info(f"telnyx relay {call_id}: tts_provider={tts_provider} stt_provider={stt_provider} voice={voice_id}")
 
         async def _send_audio_b64(b64_mulaw: str):
@@ -88,13 +91,18 @@ def build_telnyx_relay_router() -> APIRouter:
             # Unified telephony TTS — Inworld or ElevenLabs (ulaw_8000), both cached.
             res = await generate_tts_telephony(org, text, voice_id=voice_id)
             if not res.get("audio_b64"):
-                logger.error(f"telnyx relay TTS failed ({res.get('provider')}): {res.get('error')}")
+                logger.error(f"telnyx relay {call_id} TTS FAILED ({res.get('provider')}): {res.get('error')}")
                 return
             # Decode once to raw 8kHz PCMU, then send as 20ms (160-byte) frames, each base64'd,
             # on the same media stream. Slicing the base64 string directly corrupts frames.
             raw = base64.b64decode(res["audio_b64"])
-            state["speaking"] = True
             FRAME = 160  # 20ms of 8kHz mu-law
+            n_frames = (len(raw) + FRAME - 1) // FRAME
+            logger.info(f"telnyx relay {call_id}: SPEAK via {res.get('provider')} cached={res.get('cached')} "
+                        f"rawbytes={len(raw)} frames={n_frames} text='{text[:48]}'")
+            state["speaking"] = True
+            loop = asyncio.get_event_loop()
+            next_t = loop.time()
             for i in range(0, len(raw), FRAME):
                 if state["closing"] or not state["speaking"]:
                     break
@@ -103,7 +111,11 @@ def build_telnyx_relay_router() -> APIRouter:
                     frame = frame + b"\xff" * (FRAME - len(frame))  # mu-law silence pad
                 payload = base64.b64encode(frame).decode()
                 await ws.send_text(json.dumps({"event": "media", "media": {"payload": payload}}))
-                await asyncio.sleep(0.02)
+                # Monotonic 20ms pacing (avoids drift/slow playback on long replies).
+                next_t += 0.02
+                delay = next_t - loop.time()
+                if delay > 0:
+                    await asyncio.sleep(delay)
 
         async def _handle_final(said: str):
             said = (said or "").strip()
@@ -186,15 +198,42 @@ def build_telnyx_relay_router() -> APIRouter:
                 state["stt"] = stt
                 asyncio.create_task(_stt_reader(stt))
             else:
-                logger.warning(f"telnyx relay {call_id}: no STT (provider={stt_provider}). "
-                               "Enable Inworld STT to transcribe caller speech; agent will only play the opening.")
+                reason = stt_sel.get("reason", "not_configured")
+                msg = ("No streaming STT is configured for this Telnyx call "
+                       f"(reason: {reason}). The agent will play the opening but cannot hear "
+                       "the prospect — enable Inworld STT in Settings for two-way conversation.")
+                logger.error(f"telnyx relay {call_id}: {msg}")
+                await db.calls.update_one({"id": call_id}, {"$set": {
+                    "stt_status": "disabled", "stt_error": msg}})
             # greeting
             opening = call.get("opening") or "Hello, do you have a quick moment?"
-            state["speaking"] = True
-            await _speak(opening)
-            state["speaking"] = False
-            transcript.append({"role": "agent", "content": opening, "ts": _now()})
 
+            async def _greet():
+                state["speaking"] = True
+                await _speak(opening)
+                state["speaking"] = False
+                transcript.append({"role": "agent", "content": opening, "ts": _now()})
+                await db.calls.update_one({"id": call_id}, {"$set": {"transcript": transcript}})
+
+            async def _greet_once(reason: str):
+                if state["started"] or state["closing"]:
+                    return
+                state["started"] = True
+                logger.info(f"telnyx relay {call_id}: playing greeting ({reason})")
+                state["task"] = asyncio.create_task(_greet())
+
+            async def _start_watchdog():
+                # Safety net: if Telnyx's 'start' never arrives, greet anyway so the call
+                # can't stay silent forever (mis-configured stream, dropped event, etc.).
+                await asyncio.sleep(4)
+                if not state["started"] and not state["closing"]:
+                    logger.error(f"telnyx relay {call_id}: no 'start' event after 4s — greeting anyway")
+                    await _greet_once("watchdog-fallback")
+
+            asyncio.create_task(_start_watchdog())
+
+            # Wait for Telnyx's "start" event before speaking — audio sent before the
+            # bidirectional RTP stream is ready is silently dropped (the greeting is lost).
             while True:
                 raw = await ws.receive_text()
                 try:
@@ -202,12 +241,24 @@ def build_telnyx_relay_router() -> APIRouter:
                 except Exception:
                     continue
                 event = msg.get("event")
-                if event == "media" and stt:
+                if event == "connected":
+                    logger.info(f"telnyx relay {call_id}: ws connected {msg.get('version', '')}")
+                elif event == "start":
+                    mf = (msg.get("start", {}) or {}).get("media_format", {})
+                    logger.info(f"telnyx relay {call_id}: STREAM STARTED id={msg.get('stream_id')} "
+                                f"media_format={mf}")
+                    await _greet_once("start-event")
+                elif event == "media":
+                    if not stt:
+                        continue
                     pcmu = base64.b64decode(msg["media"]["payload"])
                     pcm = _pcmu_to_pcm16_16k(pcmu)
                     if _rms(pcm) > 150:  # simple VAD — don't stream silence to STT
                         await stt.send(json.dumps({"audioChunk": {"content": base64.b64encode(pcm).decode()}}))
+                elif event == "error":
+                    logger.error(f"telnyx relay {call_id}: STREAM ERROR {msg.get('payload')}")
                 elif event == "stop":
+                    logger.info(f"telnyx relay {call_id}: stream stopped")
                     break
         except WebSocketDisconnect:
             pass
