@@ -14,6 +14,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from database import db
 from integrations import (stream_agent_reply, analyze_transcript, generate_tts_inworld,
+                          generate_tts_telephony, select_tts_provider, select_stt_provider,
                           INWORLD_STT_WS, _inworld_key)
 
 try:
@@ -65,9 +66,13 @@ def build_telnyx_relay_router() -> APIRouter:
             return
         integ = org.get("integrations", {})
         key = _inworld_key(org)
+        tts_provider = select_tts_provider(org).get("provider")
+        stt_provider = select_stt_provider(org).get("provider")
+        voice_id = call.get("voice_id")
         sample_rate = 8000 if not _HAS_AUDIOOP else 16000
         transcript = list(call.get("transcript", []) or [])
         state = {"task": None, "speaking": False, "ended_by": None, "closing": False, "stt": None}
+        logger.info(f"telnyx relay {call_id}: tts_provider={tts_provider} stt_provider={stt_provider} voice={voice_id}")
 
         async def _send_audio_b64(b64_mulaw: str):
             # Telnyx expects base64 PCMU frames back on the same socket.
@@ -80,9 +85,9 @@ def build_telnyx_relay_router() -> APIRouter:
                 pass
 
         async def _speak(text: str):
-            res = await generate_tts_inworld(org, text, encoding="MULAW", sample_rate=8000)
+            # Unified telephony TTS — Inworld or ElevenLabs (ulaw_8000), both cached.
+            res = await generate_tts_telephony(org, text, voice_id=voice_id)
             if res.get("audio_b64"):
-                # chunk ~ send in slices so barge-in can interrupt mid-utterance
                 raw = res["audio_b64"]
                 for i in range(0, len(raw), 4000):
                     if state["closing"] or not state["speaking"]:
@@ -90,7 +95,7 @@ def build_telnyx_relay_router() -> APIRouter:
                     await _send_audio_b64(raw[i:i + 4000])
                     await asyncio.sleep(0.02)
             else:
-                logger.error(f"telnyx relay TTS failed: {res.get('error')}")
+                logger.error(f"telnyx relay TTS failed ({res.get('provider')}): {res.get('error')}")
 
         async def _handle_final(said: str):
             said = (said or "").strip()
@@ -157,19 +162,24 @@ def build_telnyx_relay_router() -> APIRouter:
                     "sentiment": analysis.get("sentiment"), "rating": analysis.get("score"),
                     "status": "completed", "outcome": "callback" if call.get("is_callback") else "answered",
                     "ended_by": state["ended_by"] or "prospect_hangup", "transcript": transcript,
-                    "provider_path": "telnyx+inworld"}})
+                    "provider_path": f"telnyx+{tts_provider}"}})
             except Exception as e:
                 logger.error(f"telnyx relay finalise failed: {e}")
 
         stt = None
         try:
-            if key:
+            # STT only via Inworld (ElevenLabs has no STT). If not selected/keyed, the agent can
+            # still speak (greeting/opening) but won't transcribe replies — logged clearly.
+            if stt_provider == "inworld" and key:
                 stt = await websockets.connect(INWORLD_STT_WS, additional_headers={"Authorization": f"Basic {key}"}, max_size=None)
                 await stt.send(json.dumps({"transcribeConfig": {
                     "modelId": "inworld/inworld-stt-1", "audioEncoding": "LINEAR16",
                     "sampleRateHertz": sample_rate, "numberOfChannels": 1, "language": "en"}}))
                 state["stt"] = stt
                 asyncio.create_task(_stt_reader(stt))
+            else:
+                logger.warning(f"telnyx relay {call_id}: no STT (provider={stt_provider}). "
+                               "Enable Inworld STT to transcribe caller speech; agent will only play the opening.")
             # greeting
             opening = call.get("opening") or "Hello, do you have a quick moment?"
             state["speaking"] = True

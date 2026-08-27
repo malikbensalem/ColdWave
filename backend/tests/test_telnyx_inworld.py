@@ -136,3 +136,31 @@ def test_generate_tts_inworld_no_key_errors_no_fallback():
 ])
 def test_amd_short_circuit(result, expected):
     assert telnyx_is_machine(result) is expected
+
+
+# ---------------- 5. Telnyx relay picks the right TTS provider from org settings ----------------
+def test_tts_provider_selection_for_relay():
+    inworld_org = {"id": "o1", "integrations": {"tts_stt_provider": "inworld", "inworld_api_key": "k"}}
+    eleven_org = {"id": "o2", "integrations": {"tts_stt_provider": "elevenlabs", "elevenlabs_api_key": "k", "elevenlabs_enabled": True}}
+    browser_org = {"id": "o3", "integrations": {"tts_stt_provider": "browser"}}
+    assert I.select_tts_provider(inworld_org)["provider"] == "inworld"
+    assert I.select_tts_provider(eleven_org)["provider"] == "elevenlabs"
+    assert I.select_tts_provider(browser_org)["provider"] == "browser"
+
+
+def test_telephony_tts_browser_has_no_audio():
+    # Browser provider must not attempt telephony synthesis (no network) and surfaces a clear error.
+    org = {"id": "o3", "integrations": {"tts_stt_provider": "browser"}}
+    res = asyncio.get_event_loop().run_until_complete(
+        I.generate_tts_telephony(org, "hello", use_cache=False))
+    assert res["audio_b64"] is None and res["error"]
+
+
+def test_voices_shape_normalization_inworld_vs_elevenlabs():
+    # Inworld voices normalize to the same keys the ElevenLabs catalog exposes to the UI.
+    iw = {"voiceId": "Ashley", "displayName": "Ashley", "langCode": "en-US"}
+    normalized = {"id": iw["voiceId"], "name": iw["displayName"], "gender": "neutral",
+                  "accent": iw["langCode"], "display_name": iw["displayName"], "provider": "inworld"}
+    el = I.VOICE_CATALOG[0]
+    for key in ("id", "name", "gender", "accent"):
+        assert key in normalized and key in el

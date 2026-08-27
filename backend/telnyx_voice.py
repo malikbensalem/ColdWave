@@ -77,7 +77,7 @@ async def telnyx_make_call(integ: dict, destination: str, call_id: str) -> dict:
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.post(f"{TELNYX}/calls", headers=_headers(key), json=payload)
     if r.status_code >= 400:
-        raise ValueError(f"Telnyx dial failed ({r.status_code}): {r.text[:200]}")
+        raise ValueError(f"Telnyx dial failed ({r.status_code}): {r.text}")
     data = r.json().get("data", {})
     return {"callid": data.get("call_control_id"), "call_leg_id": data.get("call_leg_id"), "status": "Initiated"}
 
@@ -86,7 +86,7 @@ async def telnyx_command(api_key: str, ccid: str, action: str, payload: dict):
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.post(f"{TELNYX}/calls/{ccid}/actions/{action}", headers=_headers(api_key), json=payload)
     if r.status_code >= 400:
-        logger.error(f"telnyx {action} failed {r.status_code}: {r.text[:160]}")
+        logger.error(f"telnyx {action} failed {r.status_code}: {r.text}")
     return r
 
 

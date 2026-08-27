@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 18 — RETEST of the iteration-17 CRITICAL Inworld TTS bug. VERDICT: FIXED. (1) Direct probe of integrations.generate_tts_telephony against the live demo org (tts_stt_provider=inworld, real Inworld key): voice_id='george' -> provider=inworld, 27.5KB mulaw audio in 2.32s; voice_id='charlie' -> 26.6KB in 2.30s; voice_id='Ashley' -> 29.4KB in 2.33s; voice_id='definitely_not_a_voice_xyz' -> inworld_error with the real Inworld message 'Unknown voice: definitely_not_a_voice_xyz not found!' in 2.59s (no 20s hang, no empty error). (2) POST /api/campaigns/{id}/warm-cache now returns 200 {ok:true,status:'warming'} in 0.07s (was ~80s + 502); backend log confirms the background task completed 'warmed 4/4 phrases' with the fallback voice Ashley, and a re-POST logs 4/4 cache HITs. (3) Regressions all green: /api/voices returns 100 Inworld voices with provider='inworld' (id/name/gender/accent/display_name present) and the 12-voice ElevenLabs catalog with top-level+per-voice provider='elevenlabs' incl 'george'; /api/settings/integrations/{telnyx,inworld}/test both valid:true with the supplied keys; /api/inworld/voices returns 100 dynamic voices (source=inworld). (4) Frontend: Voices tab renders 100 Inworld cards / 12 ElevenLabs cards; New Campaign + Edit Campaign voice <select> renders 101 options (Inworld) and 13 options (ElevenLabs, 'charlie' correctly preselected) with zero page/console errors; the previously reported translucent New Campaign dialog is now opaque. (5) backend/tests/test_telnyx_inworld.py 24/24 pass. No new critical issues.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/campaigns/{id}/warm-cache", "issue": "Now fire-and-forget (200 {status:'warming'}) so the caller gets no success/failure signal — TTS failures are only visible in server logs. Consider a small status field on the campaign (e.g. tts_cache_warmed_at / last_warm_error) so the UI can surface 'voice failed to synthesize'."},
+      {"endpoint": "integrations.generate_tts_inworld", "issue": "The ElevenLabs->Inworld voice fallback is silent (logs only the substituted voice). A campaign showing 'George (male, British)' will actually speak with the org's Inworld voice (Ashley, female). Log a WARN and/or migrate stored voice_id when the provider is switched."},
+      {"endpoint": "GET /api/settings/integrations", "issue": "STILL returns inworld_api_key / provider secrets in plaintext to the browser (carried over from iteration 17, unfixed)."},
+      {"endpoint": "GET /api/voices (inworld branch)", "issue": "STILL returns gender='neutral' for all 100 Inworld voices, so every card paints the female glyph (carried over from iteration 17)."},
+      {"endpoint": "test suite hygiene", "issue": "Full-suite run (REACT_APP_BACKEND_URL=... pytest tests/) = 163 passed / 16 failed / 6 errors. test_telnyx_inworld.py passes 24/24 standalone but 3 tests fail in the combined run due to cross-file asyncio event-loop pollution (RuntimeError: event loop). tests/test_iteration11_owner_features.py and tests/test_iteration12_dialer.py crash at import unless REACT_APP_BACKEND_URL is exported (they don't read /app/frontend/.env). Pre-existing, unrelated to this fix."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Campaigns → Edit campaign → AI VOICE select", "issue": "When the org's provider is Inworld but the campaign's stored voice_id is an ElevenLabs id ('charlie'/'george'), the select shows '— select —' (blank) instead of the stored value, so the admin cannot see which voice is configured and a Save could clear it. Backend now falls back correctly at synthesis time, so this is a display-only mismatch — show the stored id with a hint (e.g. 'charlie (unavailable for Inworld — will use Ashley)').", "selector": "[data-testid^=\"edit-campaign-camp_\"] then the AI VOICE select", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Campaigns → Voices tab", "issues": ["STILL shows the amber 'ElevenLabs is in mock mode — previews use your browser's voice' banner while Inworld is the active Voice-AI provider (driven by elevenlabs_enabled). Carried over from iteration 17, unfixed.", "All 100 Inworld voice cards show the female gender glyph (API returns gender neutral)."]},
+      {"screen": "New Campaign / Edit campaign dialog", "issues": ["FIXED — dialog surface is now opaque; no bleed-through of the campaign cards.", "AI VOICE / Script / Audience use native browser <select> elements rather than the shadcn Select used elsewhere — inconsistent styling (100-item native list is usable but unstyled)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration18_inworld_fix.py",
+    "/app/backend/tests/direct_inworld_probe.py",
+    "/app/backend/tests/test_telnyx_inworld.py",
+    "/app/test_reports/pytest/iteration18_results.xml"
+  ],
+  "action_items": [
+    "Edit-campaign voice select: render the stored voice_id even when it is not in the active provider's list (with an 'will fall back to <inworld voice>' hint) so admins don't see a blank AI VOICE.",
+    "Voices tab: hide/reword the 'ElevenLabs mock mode' banner when tts_stt_provider is inworld (still open from iteration 17).",
+    "Optionally surface warm-cache outcome (campaign field or toast) now that the endpoint is fire-and-forget.",
+    "Mask inworld_api_key / provider secrets in GET /api/settings/integrations (still open).",
+    "Demo org is left as tts_stt_provider=inworld with the live Inworld key and the live Telnyx key/connection saved — as planned, clear the live keys and revert to ElevenLabs now that the retest is done.",
+    "Housekeeping: make tests/test_iteration11_owner_features.py and tests/test_iteration12_dialer.py read /app/frontend/.env instead of requiring the env var, and isolate the async fixtures in test_telnyx_inworld.py so the file passes inside a full-suite run."
+  ],
+  "critical_code_review_comments": [
+    "generate_tts_inworld now maps any VOICE_CATALOG id to integ.inworld_tts_voice_id or 'Ashley' and returns result.status.message immediately — verified against the live API for both the ok and unknown-voice paths. Fallback is silent though: consider logger.warning(f'voice {orig} not an Inworld voice; using {voice_id}').",
+    "warm_campaign_cache is now consistently fire-and-forget via asyncio.create_task in both the POST handler and update_campaign; the task's exceptions are only caught per-phrase inside _warm_campaign_cache — a failure before the loop (e.g. build_campaign_call_context) is swallowed with a bare `except: return 0` and no log line."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration18_inworld_fix.py (new)",
+    "/app/backend/tests/direct_inworld_probe.py (new helper, not pytest-collected)"
+  ],
+  "success_rate": {"backend": "100% on scope (7/7 iteration-18 API tests, 24/24 test_telnyx_inworld, 23/23 iteration17+tts_selection+relay). Full legacy suite 163/185 — the 16 failures/6 errors are pre-existing env/loop issues unrelated to this fix.", "frontend": "100% on scope (Inworld 100 voices + 101 dropdown options; ElevenLabs 12 voices + 13 dropdown options with charlie preselected; no console/page errors)"},
+  "seed_data_creation": "No new records. Toggled tts_stt_provider elevenlabs<->inworld during tests and RESTORED to inworld. TTS cache now holds Ashley-voiced phrases for campaigns camp_7d91d6de448141d4 and camp_eebecdfe4f554a68.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@coldwave.ai / Admin123! (login returns access_token)",
+  "context_for_next_testing_agent": "Run: cd /app/backend && REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) python -m pytest tests/test_iteration18_inworld_fix.py tests/test_telnyx_inworld.py -v -p no:randomly. NOTE: /api/settings/integrations/telnyx/test expects body keys telnyx_api_key + telnyx_connection_id (NOT api_key/connection_id); inworld/test expects inworld_api_key. Direct TTS probe: python tests/direct_inworld_probe.py (calls generate_tts_telephony with george/charlie/Ashley/bogus and prints timing). Frontend login button is get_by_role('button', name='Sign in') — there is no button[type=submit]. Campaign edit button testid is [data-testid=\"edit-campaign-{campaign_id}\"]; the voice picker is a native <select>, so count options via page.evaluate on document.querySelectorAll('select'), not role=option. Live calls / media WS still untestable in preview.",
+  "rca_of_the_issue": "Original RCA (iter 17): Inworld reports voice errors in result.status (code=5 'Unknown voice: george not found!'), which the recv loop ignored, so asyncio.wait_for(ws.recv(), 20) timed out with an empty str(e) and warm-cache's 4 sequential syntheses hit the ~80s ingress 502. Fix now in place and verified: (a) generate_tts_inworld coerces any voice_id found in VOICE_CATALOG to integ.inworld_tts_voice_id or 'Ashley', (b) it inspects result.status.code!=0 and returns status.message immediately (2.6s), (c) POST /api/campaigns/{id}/warm-cache dispatches _warm_campaign_cache via asyncio.create_task and returns 200 {ok:true,status:'warming'} in 0.07s. Live-API evidence: 'Inworld TTS OK voice=Ashley ... bytes=51416' + 'warm-cache campaign=... warmed 4/4 phrases' in backend.err.log, and cache HITs on the second POST."
+}

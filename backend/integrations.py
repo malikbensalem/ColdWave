@@ -497,6 +497,48 @@ async def tts_cache_put(org_id: str, voice_id: str, model: str, text: str, audio
         "created_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
 
 
+async def generate_tts_telephony(org: dict, text: str, voice_id: str = None, use_cache: bool = True) -> dict:
+    """Unified 8kHz mu-law TTS for the Telnyx media bridge — branches on the org's selected
+    Voice-AI provider (Inworld or ElevenLabs). Returns {provider, audio_b64 (mulaw 8k), cached, error}.
+    Both paths use the same Mongo TTS cache."""
+    import base64 as _b64
+    provider = select_tts_provider(org).get("provider")
+    if provider == "inworld":
+        return await generate_tts_inworld(org, text, voice_id=voice_id, encoding="MULAW", sample_rate=8000, use_cache=use_cache)
+    if provider == "elevenlabs":
+        integ = (org or {}).get("integrations", {})
+        key = integ.get("elevenlabs_api_key") or os.environ.get("ELEVENLABS_API_KEY", "")
+        v = get_voice(voice_id, org) if voice_id else None
+        el_voice = (v or {}).get("elevenlabs_voice_id") or integ.get("elevenlabs_custom_voice_id")
+        model = integ.get("elevenlabs_model") or "eleven_flash_v2_5"
+        org_id = (org or {}).get("id", "")
+        cache_key_model = f"{model}|ulaw_8000"
+        if not key or not el_voice:
+            return {"provider": "elevenlabs_error", "audio_b64": None, "fmt": "mulaw_8000", "cached": False,
+                    "error": "ElevenLabs key or voice not configured for telephony."}
+        if use_cache:
+            hit = await tts_cache_get(org_id, el_voice, cache_key_model, text)
+            if hit:
+                return {"provider": "elevenlabs", "audio_b64": hit["audio_b64"], "fmt": "mulaw_8000", "cached": True, "error": None}
+        try:
+            from elevenlabs.client import ElevenLabs
+            client = ElevenLabs(api_key=key)
+            audio = client.text_to_speech.convert(text=text[:1000], voice_id=el_voice,
+                                                  model_id=model, output_format="ulaw_8000")
+            data = b"".join(audio)
+            b64 = _b64.b64encode(data).decode()
+            if not b64:
+                return {"provider": "elevenlabs_error", "audio_b64": None, "fmt": "mulaw_8000", "cached": False, "error": "ElevenLabs returned no audio."}
+            if use_cache:
+                await tts_cache_put(org_id, el_voice, cache_key_model, text, b64, "mulaw_8000")
+            return {"provider": "elevenlabs", "audio_b64": b64, "fmt": "mulaw_8000", "cached": False, "error": None}
+        except Exception as e:
+            logger.error(f"ElevenLabs ulaw TTS ERROR: {e}")
+            return {"provider": "elevenlabs_error", "audio_b64": None, "fmt": "mulaw_8000", "cached": False, "error": str(e)[:200]}
+    return {"provider": provider or "none", "audio_b64": None, "fmt": "mulaw_8000", "cached": False,
+            "error": f"Provider '{provider}' has no telephony TTS (choose Inworld or ElevenLabs)."}
+
+
 async def generate_tts_inworld(org: dict, text: str, voice_id: str = None, model: str = None,
                                encoding: str = "MULAW", sample_rate: int = 8000, use_cache: bool = True) -> dict:
     """Synthesize speech via Inworld TTS WebSocket. Caches static phrases in Mongo.
@@ -505,6 +547,10 @@ async def generate_tts_inworld(org: dict, text: str, voice_id: str = None, model
     integ = (org or {}).get("integrations", {})
     key = _inworld_key(org)
     voice_id = voice_id or integ.get("inworld_tts_voice_id") or "Ashley"
+    # A campaign may store an ElevenLabs catalog voice id (e.g. "george"); that's not a valid
+    # Inworld voice, so fall back to the org's Inworld voice (or a sensible default).
+    if any(v["id"] == voice_id for v in VOICE_CATALOG):
+        voice_id = integ.get("inworld_tts_voice_id") or "Ashley"
     model = model or integ.get("inworld_tts_model") or "inworld-tts-2-flash"
     org_id = (org or {}).get("id", "")
     fmt = f"{encoding.lower()}_{sample_rate}"
@@ -531,6 +577,12 @@ async def generate_tts_inworld(org: dict, text: str, voice_id: str = None, model
                 if "error" in msg:
                     return {"provider": "inworld_error", "audio_b64": None, "fmt": fmt, "cached": False, "error": str(msg["error"])[:200]}
                 res = msg.get("result", msg)
+                # Inworld signals voice/config errors via result.status.code != 0 — surface it
+                # immediately instead of blocking on the 20s recv timeout.
+                status = res.get("status") or msg.get("status")
+                if isinstance(status, dict) and status.get("code", 0) not in (0, None):
+                    return {"provider": "inworld_error", "audio_b64": None, "fmt": fmt, "cached": False,
+                            "error": (status.get("message") or f"Inworld status code {status.get('code')}")[:200]}
                 audio = (res.get("audioChunk") or {}).get("audioContent") or res.get("audioContent")
                 if audio:
                     chunks.append(audio)

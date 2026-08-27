@@ -554,7 +554,47 @@ async def create_campaign(req: CampaignCreate, user: dict = Depends(get_current_
     }
     await db.campaigns.insert_one(dict(doc))
     await audit(user["org_id"], user, "create", entity="campaign", entity_id=doc["id"], after={"name": req.name})
+    asyncio.create_task(_warm_campaign_cache(user["org_id"], doc["id"]))
     return clean(doc)
+
+
+@router.post("/campaigns/{campaign_id}/warm-cache")
+async def warm_campaign_cache(campaign_id: str, user: dict = Depends(get_current_user)):
+    # Run in the background so the request returns immediately (synthesis can take several seconds).
+    asyncio.create_task(_warm_campaign_cache(user["org_id"], campaign_id))
+    return {"ok": True, "status": "warming"}
+
+
+async def _warm_campaign_cache(org_id: str, campaign_id: str) -> int:
+    """Pre-synthesize a campaign's opening + common static phrases into the TTS cache so the
+    first spoken words on a live call are instant. No-op unless a telephony TTS provider is set."""
+    from integrations import generate_tts_telephony, select_tts_provider
+    org = await db.organizations.find_one({"id": org_id}, {"_id": 0})
+    camp = await db.campaigns.find_one({"id": campaign_id, "org_id": org_id}, {"_id": 0})
+    if not org or not camp:
+        return 0
+    if select_tts_provider(org).get("provider") not in ("inworld", "elevenlabs"):
+        return 0
+    try:
+        ctx = await build_campaign_call_context(org, camp)
+    except Exception:
+        return 0
+    phrases = [p for p in [
+        ctx.get("opening"),
+        "Are you still there?",
+        "No problem, I'll let you go. Thanks for your time, goodbye.",
+        "Sorry, could you say that again?",
+    ] if p]
+    warmed = 0
+    for text in phrases:
+        try:
+            res = await generate_tts_telephony(org, text, voice_id=camp.get("voice_id"))
+            if res.get("audio_b64"):
+                warmed += 1
+        except Exception as e:
+            logger.error(f"warm-cache phrase failed: {e}")
+    logger.info(f"warm-cache campaign={campaign_id} warmed {warmed}/{len(phrases)} phrases")
+    return warmed
 
 
 @router.put("/campaigns/{campaign_id}")
@@ -563,6 +603,8 @@ async def update_campaign(campaign_id: str, req: CampaignUpdate, user: dict = De
     res = await db.campaigns.update_one({"id": campaign_id, "org_id": user["org_id"]}, {"$set": updates})
     if res.matched_count == 0:
         raise HTTPException(404, "Campaign not found")
+    if "voice_id" in updates or "script_id" in updates:
+        asyncio.create_task(_warm_campaign_cache(user["org_id"], campaign_id))
     return await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
 
 
@@ -824,8 +866,29 @@ async def auto_dial_status(campaign_id: str, user: dict = Depends(get_current_us
 async def list_voices(user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
     integ = (org or {}).get("integrations", {})
-    enabled = bool(integ.get("elevenlabs_api_key") and integ.get("elevenlabs_enabled"))
     overrides = (org or {}).get("voice_characteristics", {})
+    # When Inworld is the selected Voice-AI provider, surface Inworld voices (same shape the UI uses).
+    if integ.get("tts_stt_provider") == "inworld" and (integ.get("inworld_api_key") or "").strip():
+        iw = await inworld_list_voices(org)
+        voices = []
+        for v in iw.get("voices", []):
+            vid = v.get("voiceId")
+            if not vid:
+                continue
+            ov = overrides.get(vid, {})
+            voices.append({
+                "id": vid, "name": v.get("displayName") or vid,
+                "gender": v.get("gender") or "neutral", "accent": v.get("langCode") or "",
+                "description": f"Inworld voice ({v.get('langCode', '')})".strip(),
+                "persona": ov.get("persona", ""),
+                "display_name": ov.get("name") or v.get("displayName") or vid,
+                "speed": ov.get("speed", 1.0), "stability": ov.get("stability", 0.5),
+                "style": ov.get("style", 0.0), "dynamic": bool(ov.get("dynamic", False)),
+                "provider": "inworld", "customized": bool(ov.get("name") or ov.get("persona")),
+            })
+        return {"voices": voices, "provider": "inworld", "source": iw.get("source"),
+                "error": iw.get("error"), "elevenlabs_enabled": False}
+    enabled = bool(integ.get("elevenlabs_api_key") and integ.get("elevenlabs_enabled"))
     voices = []
     for v in VOICE_CATALOG:
         ov = overrides.get(v["id"], {})
@@ -837,6 +900,7 @@ async def list_voices(user: dict = Depends(get_current_user)):
             "stability": ov.get("stability", 0.5),
             "style": ov.get("style", 0.0),
             "dynamic": bool(ov.get("dynamic", False)),
+            "provider": "elevenlabs",
             "customized": bool(ov.get("name") or ov.get("persona") or ov.get("speed") or ov.get("dynamic") or ov.get("stability") is not None),
         })
     # Append the user's custom ElevenLabs voice (if pasted in Settings).
@@ -853,7 +917,7 @@ async def list_voices(user: dict = Depends(get_current_user)):
             "style": ov.get("style", 0.0), "dynamic": bool(ov.get("dynamic", False)),
             "is_custom": True, "customized": False,
         })
-    return {"voices": voices, "elevenlabs_enabled": enabled}
+    return {"voices": voices, "provider": "elevenlabs", "elevenlabs_enabled": enabled}
 
 
 @router.put("/voices/{voice_id}/characteristics")

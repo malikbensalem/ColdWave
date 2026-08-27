@@ -1,0 +1,622 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="6" failures="16" skipped="0" tests="185" time="89.133" timestamp="2026-08-27T21:31:10.125925+00:00" hostname="agent-env-9f4d5dd8-7c6b-4e1f-81e8-bd70936a16c0"><testcase classname="tests.test_audit_kb" name="test_diff_detects_changed_fields" time="0.000" /><testcase classname="tests.test_audit_kb" name="test_diff_handles_create_and_delete" time="0.000" /><testcase classname="tests.test_audit_kb" name="test_mask_redacts_secrets" time="0.000" /><testcase classname="tests.test_audit_kb" name="test_guardrails_block_profanity" time="0.000" /><testcase classname="tests.test_audit_kb" name="test_guardrails_allow_clean_text" time="0.000" /><testcase classname="tests.test_coldwave_api.TestAuth" name="test_root_ok" time="0.163" /><testcase classname="tests.test_coldwave_api.TestAuth" name="test_login_success" time="0.371" /><testcase classname="tests.test_coldwave_api.TestAuth" name="test_login_invalid" time="0.344" /><testcase classname="tests.test_coldwave_api.TestAuth" name="test_me_bearer" time="0.474" /><testcase classname="tests.test_coldwave_api.TestAuth" name="test_me_cookie" time="0.448" /><testcase classname="tests.test_coldwave_api.TestDashboard" name="test_stats" time="0.091" /><testcase classname="tests.test_coldwave_api.TestContacts" name="test_list_seeded" time="0.092" /><testcase classname="tests.test_coldwave_api.TestContacts" name="test_create_get_update_delete" time="0.449" /><testcase classname="tests.test_coldwave_api.TestScriptsCampaigns" name="test_list_scripts" time="0.092" /><testcase classname="tests.test_coldwave_api.TestScriptsCampaigns" name="test_list_campaigns" time="0.085" /><testcase classname="tests.test_coldwave_api.TestScriptsCampaigns" name="test_generate_script_ai" time="4.389" /><testcase classname="tests.test_coldwave_api.TestScriptsCampaigns" name="test_create_campaign" time="0.241" /><testcase classname="tests.test_coldwave_api.TestVoices" name="test_list_voices" time="0.247" /><testcase classname="tests.test_coldwave_api.TestVoices" name="test_voice_preview" time="0.075" /><testcase classname="tests.test_coldwave_api.TestTestCalls" name="test_full_flow" time="3.011" /><testcase classname="tests.test_coldwave_api.TestCompliance" name="test_overview" time="0.072" /><testcase classname="tests.test_coldwave_api.TestCompliance" name="test_dnc_add_check_remove" time="0.339" /><testcase classname="tests.test_coldwave_api.TestCompliance" name="test_gdpr_erasure" time="0.230" /><testcase classname="tests.test_coldwave_api.TestSettings" name="test_get_org" time="0.079" /><testcase classname="tests.test_coldwave_api.TestSettings" name="test_get_integrations" time="0.083" /><testcase classname="tests.test_coldwave_api.TestSettings" name="test_update_integrations" time="0.140" /><testcase classname="tests.test_coldwave_api.TestSettings" name="test_list_users" time="0.085" /><testcase classname="tests.test_coldwave_api.TestSettings" name="test_invite_and_delete_user" time="0.380" /><testcase classname="tests.test_iteration11_owner_features.TestBlueprintsChannel" name="test_owner_can_create_channel_blueprints" time="0.732" /><testcase classname="tests.test_iteration11_owner_features.TestBlueprintsChannel" name="test_admin_cannot_create_blueprint" time="0.448" /><testcase classname="tests.test_iteration11_owner_features.TestBlueprintsChannel" name="test_owner_assigns_channel_blueprint_and_persists" time="0.472" /><testcase classname="tests.test_iteration11_owner_features.TestBlueprintsChannel" name="test_channel_blueprint_clear" time="0.085" /><testcase classname="tests.test_iteration11_owner_features.TestBlueprintsChannel" name="test_cleanup_blueprints" time="0.408" /><testcase classname="tests.test_iteration11_owner_features.TestOwnerUserModeration" name="test_admin_cannot_call_owner_endpoints" time="0.080" /><testcase classname="tests.test_iteration11_owner_features.TestOwnerUserModeration" name="test_find_test_user" time="0.075" /><testcase classname="tests.test_iteration11_owner_features.TestOwnerUserModeration" name="test_change_role_agent_to_admin_and_back" time="0.320" /><testcase classname="tests.test_iteration11_owner_features.TestOwnerUserModeration" name="test_cannot_assign_owner_role" time="0.077" /><testcase classname="tests.test_iteration11_owner_features.TestOwnerUserModeration" name="test_ban_and_unban_user" time="0.329" /><testcase classname="tests.test_iteration11_owner_features.TestOwnerUserModeration" name="test_cannot_ban_owner" time="0.192" /><testcase classname="tests.test_iteration11_owner_features.TestBusinessSuspend" name="test_suspend_and_reinstate_maliks" time="0.414" /><testcase classname="tests.test_iteration11_owner_features.TestCampaignSpecific" name="test_create_specific_campaign_and_verify_queue" time="0.581" /><testcase classname="tests.test_iteration11_owner_features.TestCampaignSpecific" name="test_delete_specific_campaign" time="0.080" /><testcase classname="tests.test_iteration11_owner_features.TestVoiceCharacteristics" name="test_update_all_voice_params_and_persist" time="0.278"><failure message="AssertionError: {&quot;detail&quot;:&quot;Voice not found&quot;}&#10;assert 404 == 200&#10; +  where 404 = &lt;Response [404]&gt;.status_code">self = &lt;tests.test_iteration11_owner_features.TestVoiceCharacteristics object at 0xfb82880d7090&gt;
+admin_s = &lt;requests.sessions.Session object at 0xfb8288054090&gt;
+
+    def test_update_all_voice_params_and_persist(self, admin_s):
+        voices = admin_s.get(f"{API}/voices").json()["voices"]
+        assert voices
+        vid = voices[0]["id"]
+        pytest.qa_voice_id = vid
+        # Save original values
+        pytest.qa_voice_original = {
+            "speed": voices[0].get("speed", 1.0),
+            "stability": voices[0].get("stability", 0.5),
+            "style": voices[0].get("style", 0.0),
+            "dynamic": voices[0].get("dynamic", False),
+        }
+        r = admin_s.put(f"{API}/voices/{vid}/characteristics",
+                        json={"speed": 1.15, "stability": 0.7, "style": 0.4, "dynamic": False})
+&gt;       assert r.status_code == 200, r.text
+E       AssertionError: {"detail":"Voice not found"}
+E       assert 404 == 200
+E        +  where 404 = &lt;Response [404]&gt;.status_code
+
+tests/test_iteration11_owner_features.py:232: AssertionError</failure></testcase><testcase classname="tests.test_iteration11_owner_features.TestVoiceCharacteristics" name="test_dynamic_toggle" time="0.085"><failure message="assert 404 == 200&#10; +  where 404 = &lt;Response [404]&gt;.status_code">self = &lt;tests.test_iteration11_owner_features.TestVoiceCharacteristics object at 0xfb82880d7650&gt;
+admin_s = &lt;requests.sessions.Session object at 0xfb8288054090&gt;
+
+    def test_dynamic_toggle(self, admin_s):
+        vid = pytest.qa_voice_id
+        r = admin_s.put(f"{API}/voices/{vid}/characteristics", json={"dynamic": True})
+&gt;       assert r.status_code == 200
+E       assert 404 == 200
+E        +  where 404 = &lt;Response [404]&gt;.status_code
+
+tests/test_iteration11_owner_features.py:246: AssertionError</failure></testcase><testcase classname="tests.test_iteration11_owner_features.TestVoiceCharacteristics" name="test_range_clamping" time="0.080"><failure message="assert 404 == 200&#10; +  where 404 = &lt;Response [404]&gt;.status_code">self = &lt;tests.test_iteration11_owner_features.TestVoiceCharacteristics object at 0xfb82880d7c10&gt;
+admin_s = &lt;requests.sessions.Session object at 0xfb8288054090&gt;
+
+    def test_range_clamping(self, admin_s):
+        vid = pytest.qa_voice_id
+        r = admin_s.put(f"{API}/voices/{vid}/characteristics", json={"speed": 5.0, "stability": -1.0, "style": 99.0})
+&gt;       assert r.status_code == 200
+E       assert 404 == 200
+E        +  where 404 = &lt;Response [404]&gt;.status_code
+
+tests/test_iteration11_owner_features.py:253: AssertionError</failure></testcase><testcase classname="tests.test_iteration11_owner_features.TestVoiceCharacteristics" name="test_reset_voice" time="0.078"><failure message="assert 404 == 200&#10; +  where 404 = &lt;Response [404]&gt;.status_code">self = &lt;tests.test_iteration11_owner_features.TestVoiceCharacteristics object at 0xfb82880d8290&gt;
+admin_s = &lt;requests.sessions.Session object at 0xfb8288054090&gt;
+
+    def test_reset_voice(self, admin_s):
+        vid = pytest.qa_voice_id
+        orig = pytest.qa_voice_original
+        r = admin_s.put(f"{API}/voices/{vid}/characteristics",
+                        json={"speed": 1.0, "stability": 0.5, "style": 0.0, "dynamic": False})
+&gt;       assert r.status_code == 200
+E       assert 404 == 200
+E        +  where 404 = &lt;Response [404]&gt;.status_code
+
+tests/test_iteration11_owner_features.py:262: AssertionError</failure></testcase><testcase classname="tests.test_iteration11_owner_features.TestOpeningResolution" name="test_opening_is_scripted_or_blueprint_not_hardcoded" time="5.016" /><testcase classname="tests.test_iteration12_dialer" name="test_twilio_selected_but_not_enabled_returns_twilio_error" time="2.458" /><testcase classname="tests.test_iteration12_dialer" name="test_3cx_selected_but_not_enabled_returns_3cx_error" time="2.009" /><testcase classname="tests.test_iteration12_dialer" name="test_partial_put_preserves_other_fields" time="0.233" /><testcase classname="tests.test_iteration12_dialer" name="test_twilio_test_bogus_creds" time="0.212" /><testcase classname="tests.test_iteration12_dialer" name="test_campaigns_available_for_picker" time="0.156" /><testcase classname="tests.test_iteration14_relay" name="test_live_calls_active_returns_list" time="0.526" /><testcase classname="tests.test_iteration14_relay" name="test_relay_voice_nonexistent_returns_hangup_twiml" time="0.127" /><testcase classname="tests.test_iteration14_relay" name="test_relay_voice_existing_call_returns_conversation_relay" time="2.101" /><testcase classname="tests.test_iteration14_relay" name="test_takeover_404_when_call_missing" time="0.162" /><testcase classname="tests.test_iteration14_relay" name="test_takeover_400_for_non_twilio_call" time="0.323" /><testcase classname="tests.test_iteration14_relay" name="test_takeover_missing_human_number_returns_422_or_400" time="0.130" /><testcase classname="tests.test_iteration14_relay" name="test_hangup_404_when_call_missing" time="0.137" /><testcase classname="tests.test_iteration14_relay" name="test_hangup_400_for_non_twilio_call" time="0.296" /><testcase classname="tests.test_iteration14_relay" name="test_voice_mode_persist_and_partial_merge" time="0.825" /><testcase classname="tests.test_iteration17_voices_provider.TestVoicesProviderBranching" name="test_elevenlabs_shape" time="0.576" /><testcase classname="tests.test_iteration17_voices_provider.TestVoicesProviderBranching" name="test_inworld_shape" time="0.310" /><testcase classname="tests.test_iteration17_voices_provider.TestVoicesProviderBranching" name="test_inworld_voices_endpoint" time="0.202" /><testcase classname="tests.test_iteration17_voices_provider.TestVoicesProviderBranching" name="test_restore_original" time="0.133" /><testcase classname="tests.test_iteration17_voices_provider.TestIntegrationKeyTests" name="test_telnyx_test" time="0.299" /><testcase classname="tests.test_iteration17_voices_provider.TestIntegrationKeyTests" name="test_inworld_test" time="0.186" /><testcase classname="tests.test_iteration17_voices_provider.TestIntegrationKeyTests" name="test_inworld_test_bad_key" time="0.156" /><testcase classname="tests.test_iteration17_voices_provider.TestWarmCache" name="test_warm_cache_endpoint" time="0.177" /><testcase classname="tests.test_iteration18_inworld_fix.TestWarmCache" name="test_warm_cache_returns_fast_and_warming" time="0.633" /><testcase classname="tests.test_iteration18_inworld_fix.TestWarmCache" name="test_warm_cache_second_call_also_fast" time="12.160" /><testcase classname="tests.test_iteration18_inworld_fix.TestVoices" name="test_voices_inworld_branch" time="0.354" /><testcase classname="tests.test_iteration18_inworld_fix.TestVoices" name="test_voices_elevenlabs_branch" time="0.234" /><testcase classname="tests.test_iteration18_inworld_fix.TestIntegrationTests" name="test_inworld_test" time="0.194" /><testcase classname="tests.test_iteration18_inworld_fix.TestIntegrationTests" name="test_telnyx_test" time="0.274" /><testcase classname="tests.test_iteration18_inworld_fix.TestIntegrationTests" name="test_inworld_voices_dynamic" time="0.334" /><testcase classname="tests.test_iteration2_api" name="test_health_endpoint" time="0.167" /><testcase classname="tests.test_iteration2_api" name="test_whatsapp_webhook_verification" time="0.146" /><testcase classname="tests.test_iteration2_api" name="test_whatsapp_webhook_bad_token" time="0.144" /><testcase classname="tests.test_iteration2_api" name="test_whatsapp_send_mock_delivered" time="1.682" /><testcase classname="tests.test_iteration2_api" name="test_whatsapp_send_blocked_by_dnc" time="0.142" /><testcase classname="tests.test_iteration2_api" name="test_whatsapp_dead_letters_endpoint" time="0.076" /><testcase classname="tests.test_iteration2_api" name="test_elevenlabs_validate_valid_key" time="0.902"><failure message="AssertionError: assert False is True&#10; +  where False = &lt;built-in method get of dict object at 0xfb8287f935c0&gt;('valid')&#10; +    where &lt;built-in method get of dict object at 0xfb8287f935c0&gt; = {'valid': False, 'message': 'Invalid API key (unauthorized).'}.get">session = &lt;requests.sessions.Session object at 0xfb8287efa990&gt;
+
+    def test_elevenlabs_validate_valid_key(session):
+        r = session.post(f"{BASE_URL}/api/settings/integrations/elevenlabs/test",
+                         json={"api_key": ELEVEN_KEY})
+        assert r.status_code == 200, r.text
+        body = r.json()
+&gt;       assert body.get("valid") is True
+E       AssertionError: assert False is True
+E        +  where False = &lt;built-in method get of dict object at 0xfb8287f935c0&gt;('valid')
+E        +    where &lt;built-in method get of dict object at 0xfb8287f935c0&gt; = {'valid': False, 'message': 'Invalid API key (unauthorized).'}.get
+
+tests/test_iteration2_api.py:97: AssertionError</failure></testcase><testcase classname="tests.test_iteration2_api" name="test_elevenlabs_validate_invalid_key" time="0.120" /><testcase classname="tests.test_iteration2_api" name="test_elevenlabs_enable_and_test_call" time="2.310"><failure message="AssertionError: {'call_id': 'call_2afb7c31faec48f6', 'voice': None, 'opening': 'Hi there, this is Alex calling from ColdWave — sorry to bother you out of the blue, have you got just a moment?', 'tts_provider': 'browser', ...}&#10;assert 'browser' == 'elevenlabs'&#10;  &#10;  - elevenlabs&#10;  + browser">session = &lt;requests.sessions.Session object at 0xfb8287efa990&gt;
+
+    def test_elevenlabs_enable_and_test_call(session):
+        # Save key + enable
+        integ = session.get(f"{BASE_URL}/api/settings/integrations").json() or {}
+        integ.update({"elevenlabs_api_key": ELEVEN_KEY, "elevenlabs_enabled": True})
+        r = session.put(f"{BASE_URL}/api/settings/integrations", json=integ)
+        assert r.status_code == 200
+        # Start test call
+        voices_resp = session.get(f"{BASE_URL}/api/voices").json()
+        voices = voices_resp.get("voices") if isinstance(voices_resp, dict) else voices_resp
+        assert voices, "no voices returned"
+        vid = voices[0].get("voice_id") or voices[0].get("id")
+        r2 = session.post(f"{BASE_URL}/api/calls/test/start",
+                          json={"voice_id": vid, "phone": "+15551234567", "contact_name": "Tester"})
+        assert r2.status_code == 200, r2.text
+        body = r2.json()
+&gt;       assert body.get("tts_provider") == "elevenlabs", body
+E       AssertionError: {'call_id': 'call_2afb7c31faec48f6', 'voice': None, 'opening': 'Hi there, this is Alex calling from ColdWave — sorry to bother you out of the blue, have you got just a moment?', 'tts_provider': 'browser', ...}
+E       assert 'browser' == 'elevenlabs'
+E         
+E         - elevenlabs
+E         + browser
+
+tests/test_iteration2_api.py:123: AssertionError</failure></testcase><testcase classname="tests.test_iteration2_api" name="test_audit_entries_on_contact_create" time="0.724" /><testcase classname="tests.test_iteration2_api" name="test_kb_create_and_opening_mode" time="2.747" /><testcase classname="tests.test_iteration4.TestAuthRoles" name="test_owner_login_returns_owner_role" time="0.413" /><testcase classname="tests.test_iteration4.TestAuthRoles" name="test_admin_login_returns_admin_role" time="0.362" /><testcase classname="tests.test_iteration4.TestAdminEndpoints" name="test_businesses_owner_ok" time="0.151" /><testcase classname="tests.test_iteration4.TestAdminEndpoints" name="test_businesses_admin_forbidden" time="0.146" /><testcase classname="tests.test_iteration4.TestAdminEndpoints" name="test_users_owner_returns_org_name" time="0.147" /><testcase classname="tests.test_iteration4.TestAdminEndpoints" name="test_users_admin_forbidden" time="0.165" /><testcase classname="tests.test_iteration4.TestImpersonation" name="test_owner_can_impersonate_admin_and_stop" time="0.416" /><testcase classname="tests.test_iteration4.TestImpersonation" name="test_admin_cannot_impersonate_user_in_other_org" time="0.269" /><testcase classname="tests.test_iteration4.TestImpersonation" name="test_admin_can_impersonate_user_within_own_org" time="0.620" /><testcase classname="tests.test_iteration4.TestVoices" name="test_elevenlabs_models" time="0.141" /><testcase classname="tests.test_iteration4.TestVoices" name="test_voice_characteristics_update_and_persist" time="0.448"><failure message="assert None is not None">self = &lt;tests.test_iteration4.TestVoices object at 0xfb828811b890&gt;
+admin = {'id': 'user_28f057a92e7f4473', 'email': 'admin@coldwave.ai', 'name': 'Platform Admin', 'role': 'admin', ...}
+
+    def test_voice_characteristics_update_and_persist(self, admin):
+        payload = {"name": "TEST_George", "persona": "TEST_persona_calm"}
+        r = requests.put(f"{BASE_URL}/api/voices/george/characteristics",
+                         headers=_hdr(admin["access_token"]), json=payload)
+        assert r.status_code == 200, r.text
+        out = r.json()
+        assert out["name"] == "TEST_George"
+        # GET /api/voices reflects override
+        v = requests.get(f"{BASE_URL}/api/voices", headers=_hdr(admin["access_token"]))
+        assert v.status_code == 200
+        body = v.json()
+        assert "elevenlabs_enabled" in body
+        george = next((x for x in body["voices"] if x["id"] == "george"), None)
+&gt;       assert george is not None
+E       assert None is not None
+
+tests/test_iteration4.py:158: AssertionError</failure></testcase><testcase classname="tests.test_iteration4.TestEmail" name="test_full_email_flow" time="1.111" /><testcase classname="tests.test_iteration4.TestKBEdit" name="test_create_then_edit" time="0.468" /><testcase classname="tests.test_iteration5_rbac.TestSystemsAndMe" name="test_systems_endpoint" time="0.601" /><testcase classname="tests.test_iteration5_rbac.TestSystemsAndMe" name="test_owner_me_perms" time="0.080" /><testcase classname="tests.test_iteration5_rbac.TestSystemsAndMe" name="test_admin_me_perms" time="0.515" /><testcase classname="tests.test_iteration5_rbac.TestRoles" name="test_list_roles_owner_sees_owner_builtin" time="0.081" /><testcase classname="tests.test_iteration5_rbac.TestRoles" name="test_list_roles_admin_no_owner" time="0.079" /><testcase classname="tests.test_iteration5_rbac.TestRoles" name="test_admin_create_role_and_capability_filter" time="0.230" /><testcase classname="tests.test_iteration5_rbac.TestRoles" name="test_delete_role_assigned_returns_400" time="0.617" /><testcase classname="tests.test_iteration5_rbac.TestRoles" name="test_reserved_role_name" time="0.081" /><testcase classname="tests.test_iteration5_rbac.TestBan" name="test_ban_blocks_login_and_unban_restores" time="1.617" /><testcase classname="tests.test_iteration5_rbac.TestBan" name="test_cannot_ban_self_or_owner" time="0.170" /><testcase classname="tests.test_iteration5_rbac.TestImpersonation" name="test_owner_impersonate_admin_cross_org" time="0.563" /><testcase classname="tests.test_iteration5_rbac.TestImpersonation" name="test_admin_cannot_impersonate_cross_org" time="0.164" /><testcase classname="tests.test_iteration5_rbac.TestImpersonation" name="test_cannot_impersonate_owner" time="0.136" /><testcase classname="tests.test_iteration5_rbac.TestImpersonation" name="test_role_preview" time="0.267" /><testcase classname="tests.test_iteration5_rbac.TestImpersonation" name="test_owner_role_preview_disallowed" time="0.085" /><testcase classname="tests.test_iteration5_rbac.TestImpersonation" name="test_banned_user_cannot_be_impersonated" time="0.626" /><testcase classname="tests.test_iteration5_rbac.TestBlueprints" name="test_non_owner_blocked" time="0.160" /><testcase classname="tests.test_iteration5_rbac.TestBlueprints" name="test_blueprint_crud_and_default" time="0.769" /><testcase classname="tests.test_iteration5_rbac.TestBlueprints" name="test_assign_blueprint_to_business" time="0.383" /><testcase classname="tests.test_iteration5_rbac.TestFilters" name="test_business_search_filter" time="0.069" /><testcase classname="tests.test_iteration5_rbac.TestFilters" name="test_users_filters" time="0.151" /><testcase classname="tests.test_iteration9_crm_campaigns.TestContactsEnrichment" name="test_list_contacts_enriched_fields" time="0.482" /><testcase classname="tests.test_iteration9_crm_campaigns.TestContactsEnrichment" name="test_tom_obrien_has_call" time="0.067"><failure message="AssertionError: Tom should have &gt;=1 call, got 0&#10;assert 0 &gt;= 1">self = &lt;tests.test_iteration9_crm_campaigns.TestContactsEnrichment object at 0xfb8288142190&gt;
+s = &lt;requests.sessions.Session object at 0xfb8287f61190&gt;
+
+    def test_tom_obrien_has_call(self, s):
+        r = s.get(f"{API}/contacts", timeout=20)
+        assert r.status_code == 200
+        tom = next((c for c in r.json() if "Tom" in c["name"] and "Brien" in c["name"]), None)
+        assert tom, "Seeded contact 'Tom O'Brien' not found"
+&gt;       assert tom["call_count"] &gt;= 1, f"Tom should have &gt;=1 call, got {tom['call_count']}"
+E       AssertionError: Tom should have &gt;=1 call, got 0
+E       assert 0 &gt;= 1
+
+tests/test_iteration9_crm_campaigns.py:48: AssertionError</failure></testcase><testcase classname="tests.test_iteration9_crm_campaigns.TestCampaignsAnalytics" name="test_list_campaigns_analytics" time="0.076" /><testcase classname="tests.test_iteration9_crm_campaigns.TestCampaignsAnalytics" name="test_campaign_detail_analytics_endpoint" time="0.163" /><testcase classname="tests.test_iteration9_crm_campaigns.TestCampaignsAnalytics" name="test_campaign_queue_shape" time="0.162" /><testcase classname="tests.test_iteration9_crm_campaigns.TestCampaignsAnalytics" name="test_create_campaign_with_audience_and_schedule" time="0.551" /><testcase classname="tests.test_llm_config" name="test_uses_custom_key_when_present" time="0.000" /><testcase classname="tests.test_llm_config" name="test_falls_back_to_emergent_without_custom_key" time="0.000" /><testcase classname="tests.test_llm_config" name="test_invalid_model_falls_back_to_default" time="0.000" /><testcase classname="tests.test_llm_config" name="test_model_lists_present_for_all_providers" time="0.000" /><testcase classname="tests.test_messaging" name="test_mask_phone_redacts_pii" time="0.000" /><testcase classname="tests.test_messaging" name="test_mock_provider_returns_message_id" time="0.001" /><testcase classname="tests.test_messaging" name="test_get_provider_falls_back_to_mock_without_creds" time="0.000" /><testcase classname="tests.test_messaging" name="test_get_provider_uses_cloud_when_configured" time="0.000" /><testcase classname="tests.test_tcx_iter6.TestTcxConnection" name="test_save_then_test_without_scheme" time="0.591"><failure message="AssertionError: Expected 200, got 422: {&quot;detail&quot;:[{&quot;type&quot;:&quot;missing&quot;,&quot;loc&quot;:[&quot;body&quot;],&quot;msg&quot;:&quot;Field required&quot;,&quot;input&quot;:null,&quot;url&quot;:&quot;https://errors.pydantic.dev/2.13/v/missing&quot;}]}&#10;assert 422 == 200&#10; +  where 422 = &lt;Response [422]&gt;.status_code">self = &lt;tests.test_tcx_iter6.TestTcxConnection object at 0xfb8287fe0b90&gt;
+admin_session = &lt;requests.sessions.Session object at 0xfb8287ef4f50&gt;
+
+    def test_save_then_test_without_scheme(self, admin_session):
+        integ = _get_integrations(admin_session)
+        integ.update({
+            "tcx_url": TCX_URL_NO_SCHEME,  # NO scheme — the bug
+            "tcx_username": TCX_USER,
+            "tcx_password": TCX_PASS,
+            "tcx_extension": TCX_EXT,
+            "tcx_enabled": True,
+            "tcx_verify_tls": True,
+        })
+        _put_integrations(admin_session, integ)
+    
+        r = admin_session.post(f"{BASE_URL}/api/settings/integrations/tcx/test", timeout=45)
+&gt;       assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
+E       AssertionError: Expected 200, got 422: {"detail":[{"type":"missing","loc":["body"],"msg":"Field required","input":null,"url":"https://errors.pydantic.dev/2.13/v/missing"}]}
+E       assert 422 == 200
+E        +  where 422 = &lt;Response [422]&gt;.status_code
+
+tests/test_tcx_iter6.py:74: AssertionError</failure></testcase><testcase classname="tests.test_tcx_iter6.TestTcxConnection" name="test_save_then_test_with_https_scheme" time="0.239"><failure message="AssertionError: Expected 200 with https scheme, got 422: {&quot;detail&quot;:[{&quot;type&quot;:&quot;missing&quot;,&quot;loc&quot;:[&quot;body&quot;],&quot;msg&quot;:&quot;Field required&quot;,&quot;input&quot;:null,&quot;url&quot;:&quot;https://errors.pydantic.dev/2.13/v/missing&quot;}]}&#10;assert 422 == 200&#10; +  where 422 = &lt;Response [422]&gt;.status_code">self = &lt;tests.test_tcx_iter6.TestTcxConnection object at 0xfb8287fe1150&gt;
+admin_session = &lt;requests.sessions.Session object at 0xfb8287ef4f50&gt;
+
+    def test_save_then_test_with_https_scheme(self, admin_session):
+        integ = _get_integrations(admin_session)
+        integ.update({
+            "tcx_url": TCX_URL_WITH_SCHEME,
+            "tcx_username": TCX_USER,
+            "tcx_password": TCX_PASS,
+            "tcx_extension": TCX_EXT,
+            "tcx_enabled": True,
+            "tcx_verify_tls": True,
+        })
+        _put_integrations(admin_session, integ)
+    
+        r = admin_session.post(f"{BASE_URL}/api/settings/integrations/tcx/test", timeout=45)
+&gt;       assert r.status_code == 200, f"Expected 200 with https scheme, got {r.status_code}: {r.text}"
+E       AssertionError: Expected 200 with https scheme, got 422: {"detail":[{"type":"missing","loc":["body"],"msg":"Field required","input":null,"url":"https://errors.pydantic.dev/2.13/v/missing"}]}
+E       assert 422 == 200
+E        +  where 422 = &lt;Response [422]&gt;.status_code
+
+tests/test_tcx_iter6.py:95: AssertionError</failure></testcase><testcase classname="tests.test_tcx_iter6.TestTcxConnection" name="test_missing_url_returns_400" time="0.311"><failure message="AssertionError: Expected 400 with missing URL, got 422: {&quot;detail&quot;:[{&quot;type&quot;:&quot;missing&quot;,&quot;loc&quot;:[&quot;body&quot;],&quot;msg&quot;:&quot;Field required&quot;,&quot;input&quot;:null,&quot;url&quot;:&quot;https://errors.pydantic.dev/2.13/v/missing&quot;}]}&#10;assert 422 == 400&#10; +  where 422 = &lt;Response [422]&gt;.status_code">self = &lt;tests.test_tcx_iter6.TestTcxConnection object at 0xfb8287fe1710&gt;
+admin_session = &lt;requests.sessions.Session object at 0xfb8287ef4f50&gt;
+
+    def test_missing_url_returns_400(self, admin_session):
+        # Save without URL
+        integ = _get_integrations(admin_session)
+        saved = dict(integ)
+        integ_no_url = dict(integ)
+        integ_no_url["tcx_url"] = ""
+        _put_integrations(admin_session, integ_no_url)
+        try:
+            r = admin_session.post(f"{BASE_URL}/api/settings/integrations/tcx/test", timeout=15)
+&gt;           assert r.status_code == 400, f"Expected 400 with missing URL, got {r.status_code}: {r.text}"
+E           AssertionError: Expected 400 with missing URL, got 422: {"detail":[{"type":"missing","loc":["body"],"msg":"Field required","input":null,"url":"https://errors.pydantic.dev/2.13/v/missing"}]}
+E           assert 422 == 400
+E            +  where 422 = &lt;Response [422]&gt;.status_code
+
+tests/test_tcx_iter6.py:110: AssertionError</failure></testcase><testcase classname="tests.test_tcx_iter6.TestDialGuards" name="test_dial_blocked_when_3cx_disabled" time="2.433" /><testcase classname="tests.test_tcx_iter6.TestDialGuards" name="test_dial_blocked_when_contact_opted_out" time="0.321" /><testcase classname="tests.test_tcx_iter7_routepoint" name="test_tcx_test_connection_reports_route_point" time="0.431"><failure message="AssertionError: Expected 200, got 422: {&quot;detail&quot;:[{&quot;type&quot;:&quot;missing&quot;,&quot;loc&quot;:[&quot;body&quot;],&quot;msg&quot;:&quot;Field required&quot;,&quot;input&quot;:null,&quot;url&quot;:&quot;https://errors.pydantic.dev/2.13/v/missing&quot;}]}&#10;assert 422 == 200&#10; +  where 422 = &lt;Response [422]&gt;.status_code">admin_session = &lt;requests.sessions.Session object at 0xfb8287fbbad0&gt;
+
+    def test_tcx_test_connection_reports_route_point(admin_session):
+        r = admin_session.post(f"{BASE_URL}/api/settings/integrations/tcx/test", timeout=60)
+&gt;       assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text[:300]}"
+E       AssertionError: Expected 200, got 422: {"detail":[{"type":"missing","loc":["body"],"msg":"Field required","input":null,"url":"https://errors.pydantic.dev/2.13/v/missing"}]}
+E       assert 422 == 200
+E        +  where 422 = &lt;Response [422]&gt;.status_code
+
+tests/test_tcx_iter7_routepoint.py:34: AssertionError</failure></testcase><testcase classname="tests.test_tcx_iter7_routepoint" name="test_dial_guard_empty_destination_no_contact" time="0.100" /><testcase classname="tests.test_tcx_iter7_routepoint" name="test_dial_guard_opted_out_contact_returns_400" time="0.141" /><testcase classname="tests.test_tcx_iter7_routepoint" name="test_dial_places_direct_call_to_client_number" time="8.667" /><testcase classname="tests.test_tcx_iter8_test_body" name="test_login_ok" time="0.461" /><testcase classname="tests.test_tcx_iter8_test_body" name="test_tcx_test_uses_current_body_values" time="0.847" /><testcase classname="tests.test_tcx_iter8_test_body" name="test_tcx_test_empty_body_falls_back_to_saved" time="0.821"><failure message="AssertionError: assert False is True&#10; +  where False = &lt;built-in method get of dict object at 0xfb8287fbfcc0&gt;('is_route_point')&#10; +    where &lt;built-in method get of dict object at 0xfb8287fbfcc0&gt; = {'ok': True, 'extension': '1019', 'dn_type': 'Wextension', 'is_route_point': False, ...}.get">admin_session = &lt;requests.sessions.Session object at 0xfb8287dd4ed0&gt;
+
+    def test_tcx_test_empty_body_falls_back_to_saved(admin_session):
+        """Empty JSON body must fall back to saved integration and succeed."""
+        r = admin_session.post(f"{API}/settings/integrations/tcx/test",
+                               json={}, timeout=30)
+        assert r.status_code == 200, f"expected 200, got {r.status_code}: {r.text}"
+        body = r.json()
+        assert body.get("ok") is True
+&gt;       assert body.get("is_route_point") is True
+E       AssertionError: assert False is True
+E        +  where False = &lt;built-in method get of dict object at 0xfb8287fbfcc0&gt;('is_route_point')
+E        +    where &lt;built-in method get of dict object at 0xfb8287fbfcc0&gt; = {'ok': True, 'extension': '1019', 'dn_type': 'Wextension', 'is_route_point': False, ...}.get
+
+tests/test_tcx_iter8_test_body.py:66: AssertionError</failure></testcase><testcase classname="tests.test_tcx_iter8_test_body" name="test_tcx_test_wrong_password_in_body_returns_400" time="0.822" /><testcase classname="tests.test_tcx_iter8_test_body" name="test_tcx_test_requires_admin" time="0.193" /><testcase classname="tests.test_telnyx_inworld" name="test_telnyx_signature_valid" time="0.006" /><testcase classname="tests.test_telnyx_inworld" name="test_telnyx_signature_invalid_wrong_key" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_telnyx_signature_invalid_tampered_body" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_telnyx_signature_stale_timestamp" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_select_tts_inworld_when_chosen_and_keyed" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_select_tts_inworld_ignored_without_key" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_select_tts_elevenlabs_unchanged" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_select_tts_browser_when_selected" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_select_stt_inworld_enabled" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_select_stt_none_when_disabled" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_select_stt_none_without_key" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_cache_key_deterministic_and_scoped" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_cache_put_then_get_hit" time="0.000"><failure message="RuntimeError: There is no current event loop in thread 'MainThread'.">def test_cache_put_then_get_hit():
+        async def run():
+            from database import db
+            org_id, vid, model, text = "cachetest", "Ashley", "inworld-tts-2-flash", "cache unit line"
+            await db.tts_cache.delete_many({"org_id": org_id})
+            miss = await I.tts_cache_get(org_id, vid, model, text)
+            assert miss is None
+            await I.tts_cache_put(org_id, vid, model, text, "QUJD", "mulaw_8000")
+            hit = await I.tts_cache_get(org_id, vid, model, text)
+            assert hit and hit["audio_b64"] == "QUJD" and hit["fmt"] == "mulaw_8000"
+            await db.tts_cache.delete_many({"org_id": org_id})
+&gt;       asyncio.get_event_loop().run_until_complete(run())
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_telnyx_inworld.py:122: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.unix_events._UnixDefaultEventLoopPolicy object at 0xfb8287f60210&gt;
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+&gt;           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+/usr/local/lib/python3.11/asyncio/events.py:681: RuntimeError</failure></testcase><testcase classname="tests.test_telnyx_inworld" name="test_generate_tts_inworld_no_key_errors_no_fallback" time="0.000"><failure message="RuntimeError: There is no current event loop in thread 'MainThread'.">def test_generate_tts_inworld_no_key_errors_no_fallback():
+        async def run():
+            r = await I.generate_tts_inworld({"id": "x", "integrations": {}}, "hi", use_cache=False)
+            assert r["provider"] == "inworld_error" and r["audio_b64"] is None and r["error"]
+&gt;       asyncio.get_event_loop().run_until_complete(run())
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_telnyx_inworld.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.unix_events._UnixDefaultEventLoopPolicy object at 0xfb8287f60210&gt;
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+&gt;           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+/usr/local/lib/python3.11/asyncio/events.py:681: RuntimeError</failure></testcase><testcase classname="tests.test_telnyx_inworld" name="test_amd_short_circuit[machine-True]" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_amd_short_circuit[fax-True]" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_amd_short_circuit[not_sure-True]" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_amd_short_circuit[machine_start-True]" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_amd_short_circuit[human-False]" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_amd_short_circuit[-False]" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_amd_short_circuit[human_residence-False]" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_tts_provider_selection_for_relay" time="0.000" /><testcase classname="tests.test_telnyx_inworld" name="test_telephony_tts_browser_has_no_audio" time="0.000"><failure message="RuntimeError: There is no current event loop in thread 'MainThread'.">def test_telephony_tts_browser_has_no_audio():
+        # Browser provider must not attempt telephony synthesis (no network) and surfaces a clear error.
+        org = {"id": "o3", "integrations": {"tts_stt_provider": "browser"}}
+&gt;       res = asyncio.get_event_loop().run_until_complete(
+              ^^^^^^^^^^^^^^^^^^^^^^^^
+            I.generate_tts_telephony(org, "hello", use_cache=False))
+
+tests/test_telnyx_inworld.py:154: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.unix_events._UnixDefaultEventLoopPolicy object at 0xfb8287f60210&gt;
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+&gt;           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+/usr/local/lib/python3.11/asyncio/events.py:681: RuntimeError</failure></testcase><testcase classname="tests.test_telnyx_inworld" name="test_voices_shape_normalization_inworld_vs_elevenlabs" time="0.000" /><testcase classname="tests.test_tts_selection" name="test_select_elevenlabs_when_key_and_enabled" time="0.000" /><testcase classname="tests.test_tts_selection" name="test_select_browser_when_key_present_but_disabled" time="0.000" /><testcase classname="tests.test_tts_selection" name="test_select_browser_when_no_key" time="0.000" /><testcase classname="tests.test_tts_selection" name="test_generate_tts_uses_elevenlabs_when_configured" time="0.001" /><testcase classname="tests.test_tts_selection" name="test_generate_tts_no_silent_fallback_on_error" time="0.000" /><testcase classname="tests.test_tts_selection" name="test_generate_tts_browser_when_disabled" time="0.000" /><testcase classname="tests.test_twilio_voice_webhook.TestVoiceWebhook" name="test_voice_webhook_post_returns_opening_and_gather" time="0.000"><error message="failed on setup with &quot;RuntimeError: There is no current event loop in thread 'MainThread'.&quot;">@pytest.fixture(scope="module", autouse=True)
+    def seed_call_doc():
+        """Insert a test call document directly into Mongo; clean up at the end."""
+        async def _setup():
+            org = await db.organizations.find_one({}, {"_id": 0})
+            assert org, "No organization found in DB"
+            opening = "Hi, this is George from BrightSolar. Do you have a quick moment?"
+            call_doc = {
+                "id": CALL_ID,
+                "org_id": org["id"],
+                "voice_id": "george",
+                "opening": opening,
+                "transcript": [{"role": "agent", "content": opening, "ts": datetime.now(timezone.utc).isoformat()}],
+                "script_content": "[OPENING] Hi, this is George from BrightSolar. Do you have a quick moment?\n[HOOK] We help homeowners cut energy bills with solar panels and free next-day installation.",
+                "script_type": "line_by_line",
+                "personality": "",
+                "company_overview": "[About]\nBrightSolar installs solar panels with free next-day install. Typical quote is £4,000-£8,000 depending on roof size.",
+                "provider": "twilio",
+                "status": "initiating",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.calls.delete_one({"id": CALL_ID})
+            await db.calls.insert_one(dict(call_doc))
+            return org["id"]
+    
+        async def _teardown():
+            await db.calls.delete_one({"id": CALL_ID})
+    
+&gt;       org_id = _run(_setup())
+                 ^^^^^^^^^^^^^^
+
+tests/test_twilio_voice_webhook.py:91: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_twilio_voice_webhook.py:53: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.unix_events._UnixDefaultEventLoopPolicy object at 0xfb8287f60210&gt;
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+&gt;           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+/usr/local/lib/python3.11/asyncio/events.py:681: RuntimeError</error></testcase><testcase classname="tests.test_twilio_voice_webhook.TestVoiceWebhook" name="test_voice_webhook_get_also_works" time="0.000"><error message="failed on setup with &quot;RuntimeError: There is no current event loop in thread 'MainThread'.&quot;">@pytest.fixture(scope="module", autouse=True)
+    def seed_call_doc():
+        """Insert a test call document directly into Mongo; clean up at the end."""
+        async def _setup():
+            org = await db.organizations.find_one({}, {"_id": 0})
+            assert org, "No organization found in DB"
+            opening = "Hi, this is George from BrightSolar. Do you have a quick moment?"
+            call_doc = {
+                "id": CALL_ID,
+                "org_id": org["id"],
+                "voice_id": "george",
+                "opening": opening,
+                "transcript": [{"role": "agent", "content": opening, "ts": datetime.now(timezone.utc).isoformat()}],
+                "script_content": "[OPENING] Hi, this is George from BrightSolar. Do you have a quick moment?\n[HOOK] We help homeowners cut energy bills with solar panels and free next-day installation.",
+                "script_type": "line_by_line",
+                "personality": "",
+                "company_overview": "[About]\nBrightSolar installs solar panels with free next-day install. Typical quote is £4,000-£8,000 depending on roof size.",
+                "provider": "twilio",
+                "status": "initiating",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.calls.delete_one({"id": CALL_ID})
+            await db.calls.insert_one(dict(call_doc))
+            return org["id"]
+    
+        async def _teardown():
+            await db.calls.delete_one({"id": CALL_ID})
+    
+&gt;       org_id = _run(_setup())
+                 ^^^^^^^^^^^^^^
+
+tests/test_twilio_voice_webhook.py:91: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_twilio_voice_webhook.py:53: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.unix_events._UnixDefaultEventLoopPolicy object at 0xfb8287f60210&gt;
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+&gt;           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+/usr/local/lib/python3.11/asyncio/events.py:681: RuntimeError</error></testcase><testcase classname="tests.test_twilio_voice_webhook.TestTurnWebhook" name="test_turn_interested_returns_contextual_reply_and_gather" time="0.000"><error message="failed on setup with &quot;RuntimeError: There is no current event loop in thread 'MainThread'.&quot;">@pytest.fixture(scope="module", autouse=True)
+    def seed_call_doc():
+        """Insert a test call document directly into Mongo; clean up at the end."""
+        async def _setup():
+            org = await db.organizations.find_one({}, {"_id": 0})
+            assert org, "No organization found in DB"
+            opening = "Hi, this is George from BrightSolar. Do you have a quick moment?"
+            call_doc = {
+                "id": CALL_ID,
+                "org_id": org["id"],
+                "voice_id": "george",
+                "opening": opening,
+                "transcript": [{"role": "agent", "content": opening, "ts": datetime.now(timezone.utc).isoformat()}],
+                "script_content": "[OPENING] Hi, this is George from BrightSolar. Do you have a quick moment?\n[HOOK] We help homeowners cut energy bills with solar panels and free next-day installation.",
+                "script_type": "line_by_line",
+                "personality": "",
+                "company_overview": "[About]\nBrightSolar installs solar panels with free next-day install. Typical quote is £4,000-£8,000 depending on roof size.",
+                "provider": "twilio",
+                "status": "initiating",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.calls.delete_one({"id": CALL_ID})
+            await db.calls.insert_one(dict(call_doc))
+            return org["id"]
+    
+        async def _teardown():
+            await db.calls.delete_one({"id": CALL_ID})
+    
+&gt;       org_id = _run(_setup())
+                 ^^^^^^^^^^^^^^
+
+tests/test_twilio_voice_webhook.py:91: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_twilio_voice_webhook.py:53: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.unix_events._UnixDefaultEventLoopPolicy object at 0xfb8287f60210&gt;
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+&gt;           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+/usr/local/lib/python3.11/asyncio/events.py:681: RuntimeError</error></testcase><testcase classname="tests.test_twilio_voice_webhook.TestTurnWebhook" name="test_turn_opt_out_hangs_up" time="0.000"><error message="failed on setup with &quot;RuntimeError: There is no current event loop in thread 'MainThread'.&quot;">@pytest.fixture(scope="module", autouse=True)
+    def seed_call_doc():
+        """Insert a test call document directly into Mongo; clean up at the end."""
+        async def _setup():
+            org = await db.organizations.find_one({}, {"_id": 0})
+            assert org, "No organization found in DB"
+            opening = "Hi, this is George from BrightSolar. Do you have a quick moment?"
+            call_doc = {
+                "id": CALL_ID,
+                "org_id": org["id"],
+                "voice_id": "george",
+                "opening": opening,
+                "transcript": [{"role": "agent", "content": opening, "ts": datetime.now(timezone.utc).isoformat()}],
+                "script_content": "[OPENING] Hi, this is George from BrightSolar. Do you have a quick moment?\n[HOOK] We help homeowners cut energy bills with solar panels and free next-day installation.",
+                "script_type": "line_by_line",
+                "personality": "",
+                "company_overview": "[About]\nBrightSolar installs solar panels with free next-day install. Typical quote is £4,000-£8,000 depending on roof size.",
+                "provider": "twilio",
+                "status": "initiating",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.calls.delete_one({"id": CALL_ID})
+            await db.calls.insert_one(dict(call_doc))
+            return org["id"]
+    
+        async def _teardown():
+            await db.calls.delete_one({"id": CALL_ID})
+    
+&gt;       org_id = _run(_setup())
+                 ^^^^^^^^^^^^^^
+
+tests/test_twilio_voice_webhook.py:91: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_twilio_voice_webhook.py:53: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.unix_events._UnixDefaultEventLoopPolicy object at 0xfb8287f60210&gt;
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+&gt;           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+/usr/local/lib/python3.11/asyncio/events.py:681: RuntimeError</error></testcase><testcase classname="tests.test_twilio_voice_webhook.TestAudioEndpoint" name="test_audio_unknown_token_returns_404" time="0.000"><error message="failed on setup with &quot;RuntimeError: There is no current event loop in thread 'MainThread'.&quot;">@pytest.fixture(scope="module", autouse=True)
+    def seed_call_doc():
+        """Insert a test call document directly into Mongo; clean up at the end."""
+        async def _setup():
+            org = await db.organizations.find_one({}, {"_id": 0})
+            assert org, "No organization found in DB"
+            opening = "Hi, this is George from BrightSolar. Do you have a quick moment?"
+            call_doc = {
+                "id": CALL_ID,
+                "org_id": org["id"],
+                "voice_id": "george",
+                "opening": opening,
+                "transcript": [{"role": "agent", "content": opening, "ts": datetime.now(timezone.utc).isoformat()}],
+                "script_content": "[OPENING] Hi, this is George from BrightSolar. Do you have a quick moment?\n[HOOK] We help homeowners cut energy bills with solar panels and free next-day installation.",
+                "script_type": "line_by_line",
+                "personality": "",
+                "company_overview": "[About]\nBrightSolar installs solar panels with free next-day install. Typical quote is £4,000-£8,000 depending on roof size.",
+                "provider": "twilio",
+                "status": "initiating",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.calls.delete_one({"id": CALL_ID})
+            await db.calls.insert_one(dict(call_doc))
+            return org["id"]
+    
+        async def _teardown():
+            await db.calls.delete_one({"id": CALL_ID})
+    
+&gt;       org_id = _run(_setup())
+                 ^^^^^^^^^^^^^^
+
+tests/test_twilio_voice_webhook.py:91: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_twilio_voice_webhook.py:53: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.unix_events._UnixDefaultEventLoopPolicy object at 0xfb8287f60210&gt;
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+&gt;           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+/usr/local/lib/python3.11/asyncio/events.py:681: RuntimeError</error></testcase><testcase classname="tests.test_twilio_voice_webhook.TestProviderRoutingGuard" name="test_dial_with_twilio_selected_but_disabled_returns_twilio_400" time="0.003"><error message="failed on setup with &quot;RuntimeError: There is no current event loop in thread 'MainThread'.&quot;">@pytest.fixture(scope="module", autouse=True)
+    def seed_call_doc():
+        """Insert a test call document directly into Mongo; clean up at the end."""
+        async def _setup():
+            org = await db.organizations.find_one({}, {"_id": 0})
+            assert org, "No organization found in DB"
+            opening = "Hi, this is George from BrightSolar. Do you have a quick moment?"
+            call_doc = {
+                "id": CALL_ID,
+                "org_id": org["id"],
+                "voice_id": "george",
+                "opening": opening,
+                "transcript": [{"role": "agent", "content": opening, "ts": datetime.now(timezone.utc).isoformat()}],
+                "script_content": "[OPENING] Hi, this is George from BrightSolar. Do you have a quick moment?\n[HOOK] We help homeowners cut energy bills with solar panels and free next-day installation.",
+                "script_type": "line_by_line",
+                "personality": "",
+                "company_overview": "[About]\nBrightSolar installs solar panels with free next-day install. Typical quote is £4,000-£8,000 depending on roof size.",
+                "provider": "twilio",
+                "status": "initiating",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.calls.delete_one({"id": CALL_ID})
+            await db.calls.insert_one(dict(call_doc))
+            return org["id"]
+    
+        async def _teardown():
+            await db.calls.delete_one({"id": CALL_ID})
+    
+&gt;       org_id = _run(_setup())
+                 ^^^^^^^^^^^^^^
+
+tests/test_twilio_voice_webhook.py:91: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_twilio_voice_webhook.py:53: in _run
+    return asyncio.get_event_loop().run_until_complete(coro)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.unix_events._UnixDefaultEventLoopPolicy object at 0xfb8287f60210&gt;
+
+    def get_event_loop(self):
+        """Get the event loop for the current context.
+    
+        Returns an instance of EventLoop or raises an exception.
+        """
+        if (self._local._loop is None and
+                not self._local._set_called and
+                threading.current_thread() is threading.main_thread()):
+            self.set_event_loop(self.new_event_loop())
+    
+        if self._local._loop is None:
+&gt;           raise RuntimeError('There is no current event loop in thread %r.'
+                               % threading.current_thread().name)
+E           RuntimeError: There is no current event loop in thread 'MainThread'.
+
+/usr/local/lib/python3.11/asyncio/events.py:681: RuntimeError</error></testcase></testsuite></testsuites>
