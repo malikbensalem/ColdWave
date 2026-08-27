@@ -91,6 +91,38 @@ function IntegrationsTab() {
   };
   const [balances, setBalances] = useState(null);
   const [balBusy, setBalBusy] = useState(false);
+  const [telnyxStatus, setTelnyxStatus] = useState(null);
+  const [telnyxBusy, setTelnyxBusy] = useState(false);
+  const [inworldStatus, setInworldStatus] = useState(null);
+  const [inworldBusy, setInworldBusy] = useState(false);
+  const [inworldVoices, setInworldVoices] = useState([]);
+  const testTelnyx = async () => {
+    setTelnyxBusy(true); setTelnyxStatus(null);
+    try {
+      const r = await api.post("/settings/integrations/telnyx/test", { telnyx_api_key: data.telnyx_api_key, telnyx_connection_id: data.telnyx_connection_id });
+      setTelnyxStatus(r.data);
+      r.data.valid ? toast.success("Telnyx connection valid ✓") : toast.error(r.data.error || "Telnyx check failed");
+    } catch (e) { toast.error(apiErr(e)); }
+    finally { setTelnyxBusy(false); }
+  };
+  const loadInworldVoices = async () => {
+    try {
+      const r = await api.get("/inworld/voices");
+      setInworldVoices(r.data.voices || []);
+      if (r.data.source === "fallback" && r.data.error) toast.info(`Inworld voices: using fallback list (${r.data.error})`);
+    } catch (e) { /* silent */ }
+  };
+  const testInworld = async () => {
+    setInworldBusy(true); setInworldStatus(null);
+    try {
+      const r = await api.post("/settings/integrations/inworld/test", { inworld_api_key: data.inworld_api_key });
+      setInworldStatus(r.data);
+      if (r.data.valid) { toast.success("Inworld API key valid ✓"); loadInworldVoices(); }
+      else toast.error(r.data.error || "Inworld check failed");
+    } catch (e) { toast.error(apiErr(e)); }
+    finally { setInworldBusy(false); }
+  };
+  useEffect(() => { if (data?.inworld_api_key) loadInworldVoices(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [data?.inworld_api_key]);
   const webhookBase = (process.env.REACT_APP_BACKEND_URL || window.location.origin).replace(/\/$/, "");
   const loadBalances = async () => {
     setBalBusy(true);
@@ -198,14 +230,15 @@ function IntegrationsTab() {
           </div>
         )}
       </Section>
-      <Section icon={Phone} title="Telephony provider" badge={(data.telephony_provider || "3cx") === "twilio" ? "Twilio" : "3CX"}>
-        <p className="text-xs text-muted-foreground -mt-1 mb-2">Choose which provider places calls (and SMS). Configure the selected one below.</p>
+      <Section icon={Phone} title="Telephony provider" badge={{ "3cx": "3CX", twilio: "Twilio", telnyx: "Telnyx" }[data.telephony_provider || "3cx"]}>
+        <p className="text-xs text-muted-foreground -mt-1 mb-2">Choose which provider places calls. Configure the selected one below.</p>
         <div className="inline-flex rounded-sm border border-border overflow-hidden" data-testid="telephony-provider-switch">
-          {[["3cx", "3CX Call Control"], ["twilio", "Twilio"]].map(([v, label]) => (
+          {[["3cx", "3CX Call Control"], ["twilio", "Twilio"], ["telnyx", "Telnyx"]].map(([v, label]) => (
             <button key={v} type="button" data-testid={`provider-${v}`} onClick={() => { const next = { ...data, telephony_provider: v }; setData(next); save(next); }}
               className={`h-9 px-4 text-sm font-medium ${(data.telephony_provider || "3cx") === v ? "bg-primary text-primary-foreground" : "bg-card hover:bg-accent"}`}>{label}</button>
           ))}
         </div>
+        <p className="text-[11px] text-muted-foreground mt-2">Est. UK cost/min — <b>Telnyx</b> ~$0.006/min (cheapest) · <b>Twilio</b> ~$0.014/min · <b>3CX</b> depends on your SIP trunk.</p>
       </Section>
 
       <Section icon={Phone} title="3CX Telephony (Call Control API)" badge={data.tcx_url ? "Configured" : "Not set"}>
@@ -246,6 +279,40 @@ function IntegrationsTab() {
           <p className="text-xs text-muted-foreground mt-1.5">⚡ <b>For sub-1s responses</b> pick a fast model (<b>GPT-4o</b> / <b>GPT-4.1-mini</b>) in the AI Language Model section below — Claude adds ~1.2s to the first word.</p>
         </div>
         <p className="text-xs text-muted-foreground">Find your <b>Account SID</b> &amp; <b>Auth Token</b> on the <b>Twilio Console dashboard</b>, and buy/verify a number under <b>Phone Numbers</b>. Select <b>Twilio</b> in “Telephony provider” above to make it the active caller.</p>
+      </Section>
+
+      <Section icon={Phone} title="Telnyx (Programmable Voice)" badge={telnyxStatus ? (telnyxStatus.valid ? "Valid ✓" : "Invalid ✗") : (data.telnyx_api_key ? "Key set" : "Not set")}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <F label="API Key" testid="telnyx-key" type="password" value={data.telnyx_api_key} onChange={set("telnyx_api_key")} placeholder="KEY..." />
+          <F label="Connection ID (Call Control App)" testid="telnyx-connection" value={data.telnyx_connection_id} onChange={set("telnyx_connection_id")} placeholder="20…" />
+          <F label="Public Key (webhook signing)" testid="telnyx-public-key" type="password" value={data.telnyx_public_key} onChange={set("telnyx_public_key")} placeholder="Ed25519 public key (base64)" />
+          <F label="Telnyx phone number" testid="telnyx-number" value={data.telnyx_phone_number} onChange={set("telnyx_phone_number")} placeholder="+441234567890" />
+        </div>
+        <div className="flex items-center gap-3 mt-1 flex-wrap">
+          <Toggle testid="telnyx-enabled" label="Enable Telnyx live calling" checked={data.telnyx_enabled} onChange={set("telnyx_enabled")} />
+          <button data-testid="test-telnyx-button" onClick={testTelnyx} disabled={telnyxBusy} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">{telnyxBusy ? "Testing…" : "Test connection"}</button>
+          <button data-testid="save-telnyx-button" onClick={() => save()} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent">Save</button>
+        </div>
+        {telnyxStatus && <p className={`text-xs ${telnyxStatus.valid ? "text-success" : "text-destructive"}`}>{telnyxStatus.valid ? `Connection ${telnyxStatus.connection_id} active ✓` : (telnyxStatus.error || "Invalid")}</p>}
+        <div className="mt-2 pt-2 border-t border-border">
+          <p className="text-xs font-medium mb-1">Telnyx webhook URL</p>
+          <div className="flex items-center gap-2">
+            <code data-testid="telnyx-webhook-url" className="flex-1 text-xs bg-secondary rounded-sm px-2 py-1.5 overflow-x-auto whitespace-nowrap">{webhookBase}/api/telephony/telnyx/webhook</code>
+            <button type="button" onClick={() => { navigator.clipboard?.writeText(`${webhookBase}/api/telephony/telnyx/webhook`); toast.success("Webhook URL copied"); }} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent shrink-0">Copy</button>
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-1.5">Set this as the webhook on your Telnyx <b>Call Control application</b>, then select <b>Telnyx</b> in “Telephony provider” above. Answering-machine detection is enabled automatically to skip voicemail.</p>
+        </div>
+      </Section>
+
+      <Section icon={MicrophoneStage} title="Voice AI provider (STT + TTS)" badge={{ elevenlabs: "ElevenLabs", browser: "Browser", inworld: "Inworld" }[data.tts_stt_provider || "elevenlabs"]}>
+        <p className="text-xs text-muted-foreground -mt-1 mb-2">Choose how the AI hears and speaks. Configure the selected one below.</p>
+        <div className="inline-flex rounded-sm border border-border overflow-hidden" data-testid="voiceai-provider-switch">
+          {[["elevenlabs", "ElevenLabs"], ["browser", "Browser (free)"], ["inworld", "Inworld"]].map(([v, label]) => (
+            <button key={v} type="button" data-testid={`voiceai-${v}`} onClick={() => { const next = { ...data, tts_stt_provider: v }; setData(next); save(next); }}
+              className={`h-9 px-4 text-sm font-medium ${(data.tts_stt_provider || "elevenlabs") === v ? "bg-primary text-primary-foreground" : "bg-card hover:bg-accent"}`}>{label}</button>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted-foreground mt-2">Est. cost — <b>Inworld</b> STT ~$0.005/min + TTS ~$0.0008/char (lowest latency on Flash) · <b>ElevenLabs</b> TTS from ~$0.0009/char · <b>Browser</b> free (no telephony audio).</p>
       </Section>
 
       <Section icon={MicrophoneStage} title="ElevenLabs Voice" badge={elevenStatus ? (elevenStatus.valid ? "Valid ✓" : "Invalid ✗") : (data.elevenlabs_api_key ? "Key set" : "Mock mode")}>
@@ -292,6 +359,24 @@ function IntegrationsTab() {
           <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-sm px-2 py-1.5">Heads up: ElevenLabs <b>free plans cannot use shared/Explore library voices via the API</b> (you’ll get a “paid plan required” error) — add the voice to My Voices or upgrade. For <b>live Twilio calls</b>, custom voices also need your ElevenLabs API key linked in the Twilio Console (Voice → TTS providers).</p>
         </div>
         <p className="text-xs text-muted-foreground">Paste a key and it validates automatically — if valid, voices are enabled and saved. Test calls then use ElevenLabs audio (no silent fallback).</p>
+      </Section>
+
+      <Section icon={MicrophoneStage} title="Inworld (STT + TTS)" badge={inworldStatus ? (inworldStatus.valid ? "Valid ✓" : "Invalid ✗") : (data.inworld_api_key ? "Key set" : "Not set")}>
+        <F label="API Key (Base64 Basic key)" testid="inworld-key" type="password" value={data.inworld_api_key} onChange={set("inworld_api_key")} placeholder="Base64 API key from Inworld portal" />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Sel label="TTS Voice" testid="inworld-voice" value={data.inworld_tts_voice_id || ""} onChange={set("inworld_tts_voice_id")}
+            options={[{ value: "", label: inworldVoices.length ? "Select a voice…" : "Test key to load voices" }, ...inworldVoices.map((v) => ({ value: v.voiceId, label: `${v.displayName || v.voiceId}${v.langCode ? ` (${v.langCode})` : ""}` }))]} />
+          <Sel label="TTS Model" testid="inworld-model" value={data.inworld_tts_model || "inworld-tts-2-flash"} onChange={set("inworld_tts_model")}
+            options={[{ value: "inworld-tts-2-flash", label: "inworld-tts-2-flash (fastest & cheapest)" }, { value: "inworld-tts-2", label: "inworld-tts-2 (higher quality)" }]} />
+        </div>
+        <div className="flex items-center gap-3 mt-1 flex-wrap">
+          <Toggle testid="inworld-stt-enabled" label="Enable Inworld STT" checked={data.inworld_stt_enabled} onChange={set("inworld_stt_enabled")} />
+          <Toggle testid="inworld-enabled" label="Enable Inworld TTS" checked={data.inworld_enabled} onChange={set("inworld_enabled")} />
+          <button data-testid="test-inworld-button" onClick={testInworld} disabled={inworldBusy} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">{inworldBusy ? "Testing…" : "Test key"}</button>
+          <button data-testid="save-inworld-button" onClick={() => save()} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent">Save</button>
+        </div>
+        {inworldStatus && <p className={`text-xs ${inworldStatus.valid ? "text-success" : "text-destructive"}`}>{inworldStatus.valid ? "API key valid ✓" : (inworldStatus.error || "Invalid")}</p>}
+        <p className="text-[11px] text-muted-foreground">Select <b>Inworld</b> in “Voice AI provider” above to route live-call speech through Inworld. Voices are fetched from your account; if that fails a small fallback list is used. Repeated phrases (openings, disclaimers) are cached to cut cost & latency.</p>
       </Section>
 
       <Section icon={WhatsappLogo} title="WhatsApp Business Cloud API" badge={data.whatsapp_access_token ? "Configured" : "Mock mode"}>

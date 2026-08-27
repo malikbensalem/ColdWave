@@ -5,7 +5,7 @@ import io
 import re
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Body
 from database import db
 from auth import get_current_user, require_admin, hash_password, require_perm, require_cap, user_can
 from models import (
@@ -23,7 +23,7 @@ from integrations import (
     VOICE_CATALOG, get_voice, generate_voice_preview, generate_script,
     agent_reply, analyze_transcript, generate_tts, select_tts_provider,
     validate_elevenlabs_key, generate_kb_opening, generate_opening_line, get_llm_models, validate_llm_key, llm_config,
-    get_elevenlabs_models,
+    get_elevenlabs_models, inworld_ping, inworld_list_voices,
 )
 from audit import record_audit
 from kb import get_kb_entries
@@ -86,10 +86,24 @@ async def build_campaign_call_context(org: dict, campaign: dict) -> dict:
 
 
 async def place_outbound_call(integ: dict, destination: str, say_text: str = None,
-                              voice_url: str = None, status_url: str = None, amd_url: str = None) -> dict:
-    """Route an outbound call to the tenant's selected provider (3CX or Twilio).
+                              voice_url: str = None, status_url: str = None, amd_url: str = None,
+                              call_id: str = None) -> dict:
+    """Route an outbound call to the tenant's selected provider (3CX, Twilio or Telnyx).
     Returns {result, provider, extension}. Raises HTTPException with a clear message."""
     provider = (integ.get("telephony_provider") or "3cx").lower()
+    if provider == "telnyx":
+        if not integ.get("telnyx_enabled"):
+            raise HTTPException(400, "Telnyx is selected but not enabled. Enable Telnyx in Settings → Integrations.")
+        if not (integ.get("telnyx_api_key") and integ.get("telnyx_connection_id") and integ.get("telnyx_phone_number")):
+            raise HTTPException(400, "Telnyx needs an API key, Connection ID and phone number in Settings → Integrations.")
+        from telnyx_voice import telnyx_make_call
+        try:
+            result = await telnyx_make_call(integ, destination, call_id)
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            raise HTTPException(502, f"Could not place call via Telnyx: {str(e)[:160]}")
+        return {"result": result, "provider": "telnyx", "extension": integ.get("telnyx_phone_number", "")}
     if provider == "twilio":
         if not integ.get("twilio_enabled"):
             raise HTTPException(400, "Twilio is selected but not enabled. Enable Twilio in Settings → Integrations.")
@@ -678,7 +692,7 @@ async def campaign_dial_next(campaign_id: str, user: dict = Depends(require_perm
 
     voice_url, status_url, amd_url = (_twilio_webhooks(call_id, integ) if provider == "twilio" else (None, None, None))
     try:
-        call = await place_outbound_call(integ, contact["phone"], say_text=ctx["opening"], voice_url=voice_url, status_url=status_url, amd_url=amd_url)
+        call = await place_outbound_call(integ, contact["phone"], say_text=ctx["opening"], voice_url=voice_url, status_url=status_url, amd_url=amd_url, call_id=call_id)
     except HTTPException:
         await db.calls.delete_one({"id": call_id})
         raise
@@ -764,6 +778,8 @@ async def auto_dial_start(campaign_id: str, user: dict = Depends(require_perm("l
     provider = (integ.get("telephony_provider") or "3cx").lower()
     if provider == "twilio" and not integ.get("twilio_enabled"):
         raise HTTPException(400, "Twilio is selected but not enabled. Enable it in Settings → Integrations.")
+    if provider == "telnyx" and not integ.get("telnyx_enabled"):
+        raise HTTPException(400, "Telnyx is selected but not enabled. Enable it in Settings → Integrations.")
     if provider == "3cx" and not integ.get("tcx_enabled"):
         raise HTTPException(400, "3CX live calling is not enabled. Configure it in Settings → Integrations.")
     if not within_calling_hours(org or {}).get("allowed", True):
@@ -889,6 +905,35 @@ async def test_elevenlabs(req: ElevenLabsTestRequest, user: dict = Depends(requi
     result = validate_elevenlabs_key(key)
     await audit(user["org_id"], user, "elevenlabs_key_test", detail=f"valid={result['valid']}", entity="integration")
     return result
+
+
+@router.post("/settings/integrations/telnyx/test")
+async def test_telnyx(body: dict = Body(default={}), user: dict = Depends(require_admin)):
+    """Validate a Telnyx API key + connection id. Uses posted values or saved ones."""
+    from telnyx_voice import telnyx_validate
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    saved = (org or {}).get("integrations", {})
+    integ = {"telnyx_api_key": body.get("telnyx_api_key") or saved.get("telnyx_api_key", ""),
+             "telnyx_connection_id": body.get("telnyx_connection_id") or saved.get("telnyx_connection_id", "")}
+    result = await telnyx_validate(integ)
+    await audit(user["org_id"], user, "telnyx_key_test", detail=f"valid={result.get('valid')}", entity="integration")
+    return result
+
+
+@router.post("/settings/integrations/inworld/test")
+async def test_inworld(body: dict = Body(default={}), user: dict = Depends(require_admin)):
+    """Validate an Inworld API key via a lightweight voices ping."""
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    key = body.get("inworld_api_key") or (org or {}).get("integrations", {}).get("inworld_api_key", "")
+    result = await inworld_ping(key)
+    await audit(user["org_id"], user, "inworld_key_test", detail=f"valid={result.get('valid')}", entity="integration")
+    return result
+
+
+@router.get("/inworld/voices")
+async def inworld_voices(user: dict = Depends(get_current_user)):
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    return await inworld_list_voices(org)
 
 
 @router.get("/llm/models")
@@ -1431,7 +1476,7 @@ async def dial_contact(req: DialRequest, user: dict = Depends(require_perm("lead
     # For Twilio, drive the call through the AI voice webhook (campaign voice + script + blueprint).
     voice_url, status_url, amd_url = (_twilio_webhooks(call_id, integ) if provider == "twilio" else (None, None, None))
     try:
-        call = await place_outbound_call(integ, destination, say_text=ctx["opening"], voice_url=voice_url, status_url=status_url, amd_url=amd_url)
+        call = await place_outbound_call(integ, destination, say_text=ctx["opening"], voice_url=voice_url, status_url=status_url, amd_url=amd_url, call_id=call_id)
     except HTTPException:
         await db.calls.delete_one({"id": call_id})
         raise

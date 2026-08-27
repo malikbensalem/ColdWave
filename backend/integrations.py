@@ -1,6 +1,10 @@
 import os
 import base64
+import json
+import asyncio
 import logging
+import httpx
+from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -389,6 +393,11 @@ def select_tts_provider(org: dict) -> dict:
     Rules: if org/env ElevenLabs key present AND elevenlabs_enabled -> 'elevenlabs';
     else 'browser' with explicit reason. No silent fallback."""
     integ = (org or {}).get("integrations", {})
+    # Unified selector takes precedence: Inworld when explicitly chosen and keyed.
+    if integ.get("tts_stt_provider") == "inworld" and _inworld_key(org):
+        return {"provider": "inworld", "reason": "valid_config", "key_present": True}
+    if integ.get("tts_stt_provider") == "browser":
+        return {"provider": "browser", "reason": "browser_selected", "key_present": False}
     key = integ.get("elevenlabs_api_key") or os.environ.get("ELEVENLABS_API_KEY", "")
     enabled = integ.get("elevenlabs_enabled", False)
     if key and enabled:
@@ -396,6 +405,147 @@ def select_tts_provider(org: dict) -> dict:
     if key and not enabled:
         return {"provider": "browser", "reason": "elevenlabs_key_present_but_disabled", "key_present": True}
     return {"provider": "browser", "reason": "no_elevenlabs_key", "key_present": False}
+
+
+# ---------------- Inworld (STT + TTS) + unified provider selection ----------------
+INWORLD_BASE = "https://api.inworld.ai"
+INWORLD_STT_WS = "wss://api.inworld.ai/stt/v1/transcribe:streamBidirectional"
+INWORLD_TTS_WS = "wss://api.inworld.ai/tts/v1/voice:streamBidirectional"
+INWORLD_TTS_MODELS = ["inworld-tts-2-flash", "inworld-tts-2"]
+# Static fallback used only if the dynamic Voice API fetch fails.
+INWORLD_FALLBACK_VOICES = [
+    {"voiceId": "Ashley", "displayName": "Ashley", "langCode": "en-US"},
+    {"voiceId": "Dennis", "displayName": "Dennis", "langCode": "en-US"},
+    {"voiceId": "Hades", "displayName": "Hades", "langCode": "en-US"},
+    {"voiceId": "Julia", "displayName": "Julia", "langCode": "en-US"},
+    {"voiceId": "Mark", "displayName": "Mark", "langCode": "en-US"},
+]
+
+
+def _inworld_key(org: dict) -> str:
+    integ = (org or {}).get("integrations", {})
+    return integ.get("inworld_api_key") or os.environ.get("INWORLD_API_KEY", "")
+
+
+def select_stt_provider(org: dict) -> dict:
+    """Deterministic STT selection mirroring select_tts_provider. Returns {provider, reason, key_present}."""
+    integ = (org or {}).get("integrations", {})
+    key = _inworld_key(org)
+    if key and integ.get("inworld_stt_enabled"):
+        return {"provider": "inworld", "reason": "valid_config", "key_present": True}
+    if key and not integ.get("inworld_stt_enabled"):
+        return {"provider": "none", "reason": "inworld_key_present_but_stt_disabled", "key_present": True}
+    return {"provider": "none", "reason": "no_inworld_key", "key_present": False}
+
+
+async def inworld_list_voices(org: dict, language: str = "en") -> dict:
+    """Fetch TTS voices dynamically; on failure return static fallback with the reason."""
+    key = _inworld_key(org)
+    if not key:
+        return {"voices": INWORLD_FALLBACK_VOICES, "source": "fallback", "error": "No Inworld API key configured."}
+    try:
+        async with httpx.AsyncClient(timeout=12) as c:
+            r = await c.get(f"{INWORLD_BASE}/voices/v1/voices", headers={"Authorization": f"Basic {key}"},
+                            params={"pageSize": 100, "filter": f'source = "SYSTEM" AND lang_code = "{language}"',
+                                    "orderBy": "display_name asc"})
+        if r.status_code != 200:
+            return {"voices": INWORLD_FALLBACK_VOICES, "source": "fallback",
+                    "error": f"Inworld voices API {r.status_code}: {r.text[:160]}"}
+        data = r.json()
+        voices = data.get("voices") or data.get("results") or []
+        norm = [{"voiceId": v.get("voiceId") or v.get("voice_id"),
+                 "displayName": v.get("displayName") or v.get("display_name") or v.get("voiceId"),
+                 "langCode": v.get("langCode") or v.get("lang_code", "")} for v in voices if (v.get("voiceId") or v.get("voice_id"))]
+        return {"voices": norm or INWORLD_FALLBACK_VOICES, "source": "inworld" if norm else "fallback", "error": None}
+    except Exception as e:
+        return {"voices": INWORLD_FALLBACK_VOICES, "source": "fallback", "error": f"Inworld voices fetch failed: {e}"}
+
+
+async def inworld_ping(key: str) -> dict:
+    """Lightweight API-key validation via the voices endpoint."""
+    if not key:
+        return {"valid": False, "error": "No API key provided."}
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"{INWORLD_BASE}/voices/v1/voices", headers={"Authorization": f"Basic {key}"},
+                            params={"pageSize": 1})
+        return {"valid": r.status_code == 200, "status": r.status_code,
+                "error": None if r.status_code == 200 else r.text[:160]}
+    except Exception as e:
+        return {"valid": False, "error": str(e)[:160]}
+
+
+def _tts_cache_key(org_id: str, voice_id: str, model: str, text: str) -> str:
+    import hashlib
+    raw = f"{org_id}|{voice_id}|{model}|{text}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+async def tts_cache_get(org_id: str, voice_id: str, model: str, text: str):
+    """Portable Mongo-backed TTS cache (works on localhost, no external object storage)."""
+    from database import db
+    doc = await db.tts_cache.find_one({"key": _tts_cache_key(org_id, voice_id, model, text)}, {"_id": 0, "audio_b64": 1, "fmt": 1})
+    return doc
+
+
+async def tts_cache_put(org_id: str, voice_id: str, model: str, text: str, audio_b64: str, fmt: str):
+    from database import db
+    key = _tts_cache_key(org_id, voice_id, model, text)
+    await db.tts_cache.update_one({"key": key}, {"$set": {
+        "key": key, "org_id": org_id, "voice_id": voice_id, "model": model,
+        "text": text[:400], "audio_b64": audio_b64, "fmt": fmt,
+        "created_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+
+
+async def generate_tts_inworld(org: dict, text: str, voice_id: str = None, model: str = None,
+                               encoding: str = "MULAW", sample_rate: int = 8000, use_cache: bool = True) -> dict:
+    """Synthesize speech via Inworld TTS WebSocket. Caches static phrases in Mongo.
+    Returns {provider, audio_b64, fmt, cached, error}. Never silently falls back when a key exists."""
+    import base64 as _b64
+    integ = (org or {}).get("integrations", {})
+    key = _inworld_key(org)
+    voice_id = voice_id or integ.get("inworld_tts_voice_id") or "Ashley"
+    model = model or integ.get("inworld_tts_model") or "inworld-tts-2-flash"
+    org_id = (org or {}).get("id", "")
+    fmt = f"{encoding.lower()}_{sample_rate}"
+    if not key:
+        return {"provider": "inworld_error", "audio_b64": None, "fmt": fmt, "cached": False,
+                "error": "No Inworld API key configured."}
+    if use_cache:
+        hit = await tts_cache_get(org_id, voice_id, model, text)
+        if hit:
+            logger.info(f"Inworld TTS cache HIT voice={voice_id} model={model}")
+            return {"provider": "inworld", "audio_b64": hit["audio_b64"], "fmt": hit.get("fmt", fmt), "cached": True, "error": None}
+    try:
+        import websockets
+        chunks = []
+        async with websockets.connect(INWORLD_TTS_WS, additional_headers={"Authorization": f"Basic {key}"}, max_size=None) as ws:
+            ctx = f"tts-{org_id[:8]}-{abs(hash(text)) % 100000}"
+            await ws.send(json.dumps({"context_id": ctx, "create": {
+                "voice_id": voice_id, "model_id": model,
+                "audio_config": {"audio_encoding": encoding, "sample_rate_hertz": sample_rate}, "auto_mode": False}}))
+            await ws.send(json.dumps({"context_id": ctx, "send_text": {"text": text[:1000], "flush_context": {}}}))
+            while True:
+                raw = await asyncio.wait_for(ws.recv(), timeout=20)
+                msg = json.loads(raw)
+                if "error" in msg:
+                    return {"provider": "inworld_error", "audio_b64": None, "fmt": fmt, "cached": False, "error": str(msg["error"])[:200]}
+                res = msg.get("result", msg)
+                audio = (res.get("audioChunk") or {}).get("audioContent") or res.get("audioContent")
+                if audio:
+                    chunks.append(audio)
+                if "flushCompleted" in res or msg.get("type") == "flushCompleted":
+                    break
+        audio_b64 = _b64.b64encode(b"".join(_b64.b64decode(c) for c in chunks)).decode() if chunks else ""
+        if not audio_b64:
+            return {"provider": "inworld_error", "audio_b64": None, "fmt": fmt, "cached": False, "error": "Inworld returned no audio."}
+        if use_cache:
+            await tts_cache_put(org_id, voice_id, model, text, audio_b64, fmt)
+        logger.info(f"Inworld TTS OK voice={voice_id} model={model} bytes={len(audio_b64)}")
+        return {"provider": "inworld", "audio_b64": audio_b64, "fmt": fmt, "cached": False, "error": None}
+    except Exception as e:
+        logger.error(f"Inworld TTS ERROR: {e}")
+        return {"provider": "inworld_error", "audio_b64": None, "fmt": fmt, "cached": False, "error": str(e)[:200]}
 
 
 def validate_elevenlabs_key(api_key: str) -> dict:

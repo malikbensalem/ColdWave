@@ -106,7 +106,7 @@ class TakeoverRequest(BaseModel):
 
 # ---------- Org / Settings ----------
 class IntegrationSettings(BaseModel):
-    telephony_provider: str = "3cx"  # "3cx" | "twilio"
+    telephony_provider: str = "3cx"  # "3cx" | "twilio" | "telnyx"
     tcx_enabled: bool = False
     tcx_url: str = ""
     tcx_username: str = ""
@@ -128,6 +128,20 @@ class IntegrationSettings(BaseModel):
     elevenlabs_custom_voice_id: str = ""
     elevenlabs_custom_voice_name: str = ""
     elevenlabs_custom_voice_gender: str = "female"
+    # Telnyx (Programmable Voice)
+    telnyx_enabled: bool = False
+    telnyx_api_key: str = ""
+    telnyx_public_key: str = ""
+    telnyx_connection_id: str = ""
+    telnyx_phone_number: str = ""
+    # Inworld (STT + TTS)
+    inworld_enabled: bool = False
+    inworld_api_key: str = ""
+    inworld_tts_voice_id: str = ""
+    inworld_tts_model: str = "inworld-tts-2-flash"
+    inworld_stt_enabled: bool = False
+    # Unified voice-AI provider selector: "elevenlabs" | "browser" | "inworld"
+    tts_stt_provider: str = "elevenlabs"
     o365_enabled: bool = False
     o365_tenant_id: str = ""
     o365_client_id: str = ""

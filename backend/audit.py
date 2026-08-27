@@ -50,7 +50,8 @@ def _diff(before: Optional[dict], after: Optional[dict]) -> dict:
 
 
 SECRET_FIELDS = {"password", "password_hash", "elevenlabs_api_key", "tcx_password",
-                 "o365_client_secret", "whatsapp_access_token", "whatsapp_app_secret"}
+                 "o365_client_secret", "whatsapp_access_token", "whatsapp_app_secret",
+                 "telnyx_api_key", "telnyx_public_key", "inworld_api_key"}
 
 
 def _mask(doc: Optional[dict]) -> Optional[dict]:
