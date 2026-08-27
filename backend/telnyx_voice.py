@@ -51,12 +51,12 @@ async def telnyx_validate(integ: dict) -> dict:
         async with httpx.AsyncClient(timeout=10) as c:
             r = await c.get(f"{TELNYX}/connections/{conn}", headers=_headers(key))
         if r.status_code != 200:
-            return {"valid": False, "status": r.status_code, "error": r.text[:180]}
+            return {"valid": False, "status": r.status_code, "error": r.text}
         data = r.json().get("data", {})
         return {"valid": True, "connection_id": data.get("id"), "record_type": data.get("record_type"),
                 "active": data.get("active", True)}
     except Exception as e:
-        return {"valid": False, "error": str(e)[:180]}
+        return {"valid": False, "error": str(e)}
 
 
 async def telnyx_make_call(integ: dict, destination: str, call_id: str) -> dict:
