@@ -87,15 +87,23 @@ def build_telnyx_relay_router() -> APIRouter:
         async def _speak(text: str):
             # Unified telephony TTS — Inworld or ElevenLabs (ulaw_8000), both cached.
             res = await generate_tts_telephony(org, text, voice_id=voice_id)
-            if res.get("audio_b64"):
-                raw = res["audio_b64"]
-                for i in range(0, len(raw), 4000):
-                    if state["closing"] or not state["speaking"]:
-                        break
-                    await _send_audio_b64(raw[i:i + 4000])
-                    await asyncio.sleep(0.02)
-            else:
+            if not res.get("audio_b64"):
                 logger.error(f"telnyx relay TTS failed ({res.get('provider')}): {res.get('error')}")
+                return
+            # Decode once to raw 8kHz PCMU, then send as 20ms (160-byte) frames, each base64'd,
+            # on the same media stream. Slicing the base64 string directly corrupts frames.
+            raw = base64.b64decode(res["audio_b64"])
+            state["speaking"] = True
+            FRAME = 160  # 20ms of 8kHz mu-law
+            for i in range(0, len(raw), FRAME):
+                if state["closing"] or not state["speaking"]:
+                    break
+                frame = raw[i:i + FRAME]
+                if len(frame) < FRAME:
+                    frame = frame + b"\xff" * (FRAME - len(frame))  # mu-law silence pad
+                payload = base64.b64encode(frame).decode()
+                await ws.send_text(json.dumps({"event": "media", "media": {"payload": payload}}))
+                await asyncio.sleep(0.02)
 
         async def _handle_final(said: str):
             said = (said or "").strip()
