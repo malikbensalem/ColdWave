@@ -40,21 +40,25 @@ def _headers(api_key: str) -> dict:
 
 
 async def telnyx_validate(integ: dict) -> dict:
-    """Validate API key + connection id via GET /v2/connections/{id}."""
+    """Validate the Telnyx API key (and TeXML app id if given). ConversationRelay uses a
+    TeXML Application, so a Connection ID is not required."""
     key = integ.get("telnyx_api_key") or os.environ.get("TELNYX_API_KEY", "")
-    conn = integ.get("telnyx_connection_id", "")
     if not key:
         return {"valid": False, "error": "No Telnyx API key provided."}
-    if not conn:
-        return {"valid": False, "error": "No Telnyx Connection ID provided."}
     try:
         async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{TELNYX}/connections/{conn}", headers=_headers(key))
+            r = await c.get(f"{TELNYX}/balance", headers=_headers(key))
+        if r.status_code in (401, 403):
+            return {"valid": False, "error": "Invalid Telnyx API key."}
         if r.status_code != 200:
-            return {"valid": False, "status": r.status_code, "error": r.text}
-        data = r.json().get("data", {})
-        return {"valid": True, "connection_id": data.get("id"), "record_type": data.get("record_type"),
-                "active": data.get("active", True)}
+            return {"valid": False, "status": r.status_code, "error": r.text[:160]}
+        app_id = integ.get("telnyx_texml_app_id", "")
+        if app_id:
+            async with httpx.AsyncClient(timeout=10) as c:
+                ar = await c.get(f"{TELNYX}/texml_applications/{app_id}", headers=_headers(key))
+            if ar.status_code == 404:
+                return {"valid": False, "error": "TeXML Application ID not found on this account."}
+        return {"valid": True, "texml_app_id": app_id or None}
     except Exception as e:
         return {"valid": False, "error": str(e)}
 

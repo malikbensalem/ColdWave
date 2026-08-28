@@ -134,6 +134,9 @@ class IntegrationSettings(BaseModel):
     telnyx_public_key: str = ""
     telnyx_connection_id: str = ""
     telnyx_phone_number: str = ""
+    telnyx_texml_app_id: str = ""
+    telnyx_tts_provider: str = "telnyx"  # ConversationRelay voice: "telnyx" | "elevenlabs"
+    telnyx_native_voice: str = "Telnyx.Natural.abbie"
     # Inworld (STT + TTS)
     inworld_enabled: bool = False
     inworld_api_key: str = ""

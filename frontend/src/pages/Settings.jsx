@@ -111,9 +111,9 @@ function IntegrationsTab() {
   const testTelnyx = async () => {
     setTelnyxBusy(true); setTelnyxStatus(null);
     try {
-      const r = await api.post("/settings/integrations/telnyx/test", { telnyx_api_key: data.telnyx_api_key, telnyx_connection_id: data.telnyx_connection_id });
+      const r = await api.post("/settings/integrations/telnyx/test", { telnyx_api_key: data.telnyx_api_key, telnyx_texml_app_id: data.telnyx_texml_app_id });
       setTelnyxStatus(r.data);
-      r.data.valid ? toast.success("Telnyx connection valid ✓") : toast.error(r.data.error || "Telnyx check failed");
+      r.data.valid ? toast.success("Telnyx API key valid ✓") : toast.error(r.data.error || "Telnyx check failed");
     } catch (e) { toast.error(apiErr(e)); }
     finally { setTelnyxBusy(false); }
   };
@@ -293,29 +293,39 @@ function IntegrationsTab() {
         <p className="text-xs text-muted-foreground">Find your <b>Account SID</b> &amp; <b>Auth Token</b> on the <b>Twilio Console dashboard</b>, and buy/verify a number under <b>Phone Numbers</b>. Select <b>Twilio</b> in “Telephony provider” above to make it the active caller.</p>
       </Section>
 
-      <Section icon={Phone} title="Telnyx (Programmable Voice)" badge={telnyxStatus ? (telnyxStatus.valid ? "Valid ✓" : "Invalid ✗") : (data.telnyx_api_key ? "Key set" : "Not set")}>
+      <Section icon={Phone} title="Telnyx (ConversationRelay)" badge={telnyxStatus ? (telnyxStatus.valid ? "Valid ✓" : "Invalid ✗") : (data.telnyx_api_key ? "Key set" : "Not set")}>
+        <p className="text-xs text-muted-foreground -mt-1 mb-2">Telnyx handles speech-to-text, text-to-speech and turn-taking natively (built-in <b>ConversationRelay</b>) — we just stream the AI. Uses a Telnyx <b>TeXML Application</b>.</p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <F label="API Key" testid="telnyx-key" type="password" value={data.telnyx_api_key} onChange={set("telnyx_api_key")} placeholder="KEY..." />
-          <F label="Connection ID (Call Control App)" testid="telnyx-connection" value={data.telnyx_connection_id} onChange={set("telnyx_connection_id")} placeholder="20…" />
+          <F label="TeXML Application ID" testid="telnyx-texml-app" value={data.telnyx_texml_app_id} onChange={set("telnyx_texml_app_id")} placeholder="e.g. 2673...(from TeXML App)" />
           <F label="Public Key (webhook signing)" testid="telnyx-public-key" type="password" value={data.telnyx_public_key} onChange={set("telnyx_public_key")} placeholder="Ed25519 public key (base64)" />
           <F label="Telnyx phone number" testid="telnyx-number" value={data.telnyx_phone_number} onChange={set("telnyx_phone_number")} placeholder="+441234567890" />
         </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-1">
+          <div>
+            <label className="text-xs font-medium">Voice engine</label>
+            <select data-testid="telnyx-tts-provider" value={data.telnyx_tts_provider || "telnyx"} onChange={set("telnyx_tts_provider")} className="mt-1 w-full h-9 rounded-sm border border-border bg-background px-2 text-sm">
+              <option value="telnyx">Telnyx native voices (no extra key)</option>
+              <option value="elevenlabs">ElevenLabs (needs Telnyx Integration Secret)</option>
+            </select>
+          </div>
+          {(data.telnyx_tts_provider || "telnyx") === "telnyx"
+            ? <F label="Telnyx voice" testid="telnyx-native-voice" value={data.telnyx_native_voice} onChange={set("telnyx_native_voice")} placeholder="Telnyx.Natural.abbie" />
+            : <div className="text-[11px] text-muted-foreground self-end pb-2">ElevenLabs uses the campaign's selected voice. Store your ElevenLabs key as a Telnyx <b>Integration Secret</b> in the Telnyx portal so ConversationRelay can use it.</div>}
+        </div>
         <div className="flex items-center gap-3 mt-1 flex-wrap">
           <Toggle testid="telnyx-enabled" label="Enable Telnyx live calling" checked={data.telnyx_enabled} onChange={set("telnyx_enabled")} />
-          <button data-testid="test-telnyx-button" onClick={testTelnyx} disabled={telnyxBusy} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">{telnyxBusy ? "Testing…" : "Test connection"}</button>
+          <button data-testid="test-telnyx-button" onClick={testTelnyx} disabled={telnyxBusy} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent disabled:opacity-60">{telnyxBusy ? "Testing…" : "Test API key"}</button>
           <button data-testid="save-telnyx-button" onClick={() => save()} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent">Save</button>
         </div>
-        {telnyxStatus && <p className={`text-xs ${telnyxStatus.valid ? "text-success" : "text-destructive"}`}>{telnyxStatus.valid ? `Connection ${telnyxStatus.connection_id} active ✓` : (telnyxStatus.error || "Invalid")}</p>}
+        {telnyxStatus && <p className={`text-xs ${telnyxStatus.valid ? "text-success" : "text-destructive"}`}>{telnyxStatus.valid ? `Telnyx API key valid ✓` : (telnyxStatus.error || "Invalid")}</p>}
         <div className="mt-2 pt-2 border-t border-border">
-          <p className="text-xs font-medium mb-1">Telnyx webhook URL</p>
+          <p className="text-xs font-medium mb-1">TeXML Application — Voice webhook URL</p>
           <div className="flex items-center gap-2">
-            <code data-testid="telnyx-webhook-url" className="flex-1 text-xs bg-secondary rounded-sm px-2 py-1.5 overflow-x-auto whitespace-nowrap">{webhookBase}/api/telephony/telnyx/webhook</code>
-            <button type="button" onClick={() => { navigator.clipboard?.writeText(`${webhookBase}/api/telephony/telnyx/webhook`); toast.success("Webhook URL copied"); }} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent shrink-0">Copy</button>
+            <code data-testid="telnyx-webhook-url" className="flex-1 text-xs bg-secondary rounded-sm px-2 py-1.5 overflow-x-auto whitespace-nowrap">{webhookBase}/api/telephony/telnyx/texml/&#123;CallSid&#125;</code>
+            <button type="button" onClick={() => { navigator.clipboard?.writeText(`${webhookBase}/api/telephony/telnyx/texml/`); toast.success("Base URL copied"); }} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent shrink-0">Copy</button>
           </div>
-          <p className="text-[11px] text-muted-foreground mt-1.5">Set this as the webhook on your Telnyx <b>Call Control application</b>, then select <b>Telnyx</b> in “Telephony provider” above. Answering-machine detection is enabled automatically to skip voicemail.</p>
-          {data.telephony_provider === "telnyx" && !(data.inworld_api_key && data.inworld_stt_enabled) && (
-            <p data-testid="telnyx-stt-warning" className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-sm px-2 py-1.5 mt-2">Heads up: two-way conversation on Telnyx needs <b>Inworld STT</b> to hear the prospect. Add your Inworld key and turn on <b>“Enable Inworld STT”</b> below — otherwise the AI plays the greeting but can’t respond when they talk.</p>
-          )}
+          <p className="text-[11px] text-muted-foreground mt-1.5">Setup: in the Telnyx portal create a <b>TeXML Application</b>, assign your number to it, and paste its <b>Application ID</b> above. We set the per-call Voice URL automatically when dialing, so you don't need to hardcode it in the app. Then select <b>Telnyx</b> in “Telephony provider” above. Two-way conversation + answering-machine detection are built in.</p>
         </div>
       </Section>
 

@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 20: verified the Telnyx voice path switch from custom PCMU/Inworld relay to Telnyx built-in ConversationRelay (TeXML). Wrote /app/backend/tests/test_iteration20_telnyx_texml.py (12 tests, 12 passed) against the public URL: admin login (access_token), TeXML not-found branch (<Say>+<Hangup/>), full <Connect action=...><ConversationRelay url=wss://.../api/telephony/telnyx/relay/ws/{id} welcomeGreeting=... voice=\"Telnyx.Natural.abbie\" transcriptionProvider=\"deepgram\" interruptible=\"any\"><Parameter name=\"call_id\"/> XML for a real call doc seeded via POST /api/calls/test/start, /texml/ended/{id} -> <Response><Hangup/></Response>, /texml/status/{id} and /texml/amd/{id} -> 204 (form body and empty body, known and unknown ids), /settings/integrations/telnyx/test with no key -> 200 {valid:false, error:'No Telnyx API key provided.'} (no 500) and with a bogus key -> valid:false, persistence of new fields telnyx_texml_app_id / telnyx_tts_provider / telnyx_native_voice via PUT+GET /api/settings/integrations (restored afterwards). Regression: Twilio /api/telephony/twilio/relay/voice/{id} GET+POST for unknown and existing call ids returns 200 TwiML (no 500), GET /api/settings/integrations/balances 200, and POST /api/calls/test/turn returns a non-empty AI 'reply' (shared LLM streaming intact). Existing unit suites tests/test_telnyx_texml.py + tests/test_telnyx_inworld.py = 35 passed. Frontend Playwright: Settings -> 'Telnyx (ConversationRelay)' renders telnyx-texml-app, telnyx-tts-provider (options 'Telnyx native voices (no extra key)' / 'ElevenLabs (needs Telnyx Integration Secret)'), telnyx-native-voice (shown when provider=telnyx, hidden on elevenlabs with the Integration Secret note appearing, restored on switch back), telnyx-webhook-url shows https://<host>/api/telephony/telnyx/texml/{CallSid}, and test-telnyx-button triggers the test showing 'Invalid x' badge + 'No Telnyx API key provided.' message. No console errors, no 500s. No real outbound calls attempted.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "n/a (test harness)", "issue": "tests/test_twilio_voice_webhook.py module-scoped seed fixture errors (6 errors) when run in the same pytest session AFTER tests/test_telnyx_texml.py, because each module calls asyncio.run() and the shared motor client gets bound to a closed event loop. Passes standalone (6/6). Pre-existing harness issue only; consider a session-scoped event_loop fixture."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Settings -> Telnyx (ConversationRelay)", "issues": ["'Voice engine' uses a raw native <select> while sibling fields use the app's uppercase-tracked label style + shadcn-styled inputs; label casing/control style is inconsistent with 'TELNYX VOICE' / 'TEXML APPLICATION ID' next to it (cosmetic only)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration20_telnyx_texml.py",
+    "/app/backend/tests/test_telnyx_texml.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "telnyx_texml.py texml_instructions() sets status=in_progress/answered_at on EVERY fetch of the TeXML URL, including our own test GETs and any Telnyx retry — consider guarding with a conditional update so retries don't overwrite answered_at.",
+    "relay_ws _finalise() is invoked in `finally` even when _load() never ran (e.g. Telnyx connects then disconnects before `setup`); it then marks the call no_answer. Acceptable, but ensure it cannot clobber a call already finalised by /texml/status."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration20_telnyx_texml.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Created one browser test-call doc via POST /api/calls/test/start (demo org) to exercise the ConversationRelay XML branch; temporarily set then restored telnyx_texml_app_id/telnyx_tts_provider in demo org integrations.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@coldwave.ai / Admin123! (JWT in access_token)",
+  "context_for_next_testing_agent": "Telnyx ConversationRelay (TeXML) backend + Settings UI fully verified in iteration 20 (12/12 API tests, all UI testids). Real telephony (Telnyx/Twilio outbound, relay WebSocket audio) is NOT verifiable in preview — demo org has no Telnyx key/TeXML app id, so dial paths return clear 400s. Reuse /app/backend/tests/test_iteration20_telnyx_texml.py for regression; run it standalone or note that test_twilio_voice_webhook.py errors when chained after other async-seeding modules.",
+  "rca_of_the_issue": "No product defects found. The only failure observed (6 errors in test_twilio_voice_webhook.py) is an event-loop reuse problem in the pre-existing test harness: each test module wraps DB seeding in asyncio.run(), which closes the loop the shared motor client cached, so the next module's fixture raises. Fix belongs in test fixtures, not app code."
+}

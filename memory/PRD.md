@@ -353,3 +353,19 @@ Audit verdict was FAIL (1 Critical, 2 High, 1 Medium). Fixes applied (nothing re
 - **Improvements this iteration**: STT-missing case now **fails visibly** — persists `stt_status="disabled"` + a helpful `stt_error` on the call doc (not just a log). Module docstring updated to reflect provider-agnostic design.
 - **Tests**: `tests/test_telnyx_inworld.py` now **29 passing** (+ generate_tts_telephony: ElevenLabs-no-voice → error, Inworld-no-key → error, no-provider → error — all without network).
 - ⚠️ Live audio still requires a real deployed Telnyx call to fully confirm.
+
+
+## Iteration 36 (2026-08-27) — Telnyx switched to BUILT-IN ConversationRelay (TeXML)
+- **Why**: the custom PCMU/Inworld media relay (`telnyx_relay.py`) produced silent/unreliable calls. Per user request, Telnyx now uses its **built-in ConversationRelay** (TeXML) — Telnyx does STT (Deepgram) + TTS + turn-taking natively; we only stream our LLM. Same frame protocol as Twilio ConversationRelay (`setup`/`prompt`/`interrupt` → `text`/`end`).
+- **NEW `telnyx_texml.py`** (mirrors `conversation_relay.py`):
+  - `telnyx_texml_make_call()` → `POST /v2/texml/calls/{app_id}` (To/From/Url/StatusCallback/AsyncAmd), returns call_sid.
+  - `POST /texml/{call_id}` → returns `<Connect action=.../><ConversationRelay url=wss://…/relay/ws/{id} welcomeGreeting=opening voice=… transcriptionProvider="deepgram" interruptible="any" dtmfDetection="true"><Parameter call_id/></ConversationRelay></Connect>`.
+  - `POST /texml/ended/{id}` → `<Hangup/>`; `POST /texml/status/{id}` + `/texml/amd/{id}` → 204 (busy/no-answer tagging + voicemail tagging).
+  - websocket `/relay/ws/{id}` → LLM turn loop (barge-in cancel, opt-out/goodbye close, finalise+analyze). `provider_path="telnyx+conversationrelay"`.
+- **Voice engine** (new setting `telnyx_tts_provider`): **Telnyx native voices** (default `telnyx_native_voice="Telnyx.Natural.abbie"`, no extra key) OR **ElevenLabs** (voice string `ElevenLabs.<model>.<voiceId>`, needs the org's ElevenLabs key stored as a Telnyx **Integration Secret**). ⚠️ **Inworld is NOT available inside ConversationRelay** — dropped for Telnyx (user agreed) in exchange for reliable two-way. Twilio/3CX/ElevenLabs paths untouched.
+- **New settings** (`models.py`): `telnyx_texml_app_id`, `telnyx_tts_provider`, `telnyx_native_voice`. `place_outbound_call` Telnyx branch now requires `telnyx_texml_app_id` (not connection_id) and dials via TeXML. `telnyx_validate` now checks the API key (via `/v2/balance`) + optional TeXML app id.
+- **Settings UI**: Telnyx section retitled "Telnyx (ConversationRelay)" — TeXML Application ID field, Voice-engine selector (Telnyx native / ElevenLabs), native-voice field, TeXML Voice webhook URL + portal setup steps. Obsolete Inworld-STT warning removed.
+- **Hardening (from code review)**: `answered_at` stamped once (guards Telnyx retries); `_finalise()` skips when not loaded or when the call is already completed/no_answer (guards status-callback races).
+- **Setup required by user (Telnyx portal)**: create a **TeXML Application**, assign the number to it, paste its **Application ID** in Settings; for ElevenLabs voice, store the ElevenLabs key as a Telnyx **Integration Secret**. Per-call Voice URL is set automatically at dial time.
+- **Tests**: NEW `tests/test_telnyx_texml.py` (6) + existing = **35 passing**. Testing agent iteration_20: **backend 100%, frontend 100%**, no product defects.
+- The old `telnyx_voice.py`/`telnyx_relay.py` modules remain mounted but are no longer used for outbound (Call Control path retired in favour of TeXML). ⚠️ Real audio still requires a live Telnyx call to confirm.

@@ -79,6 +79,8 @@ from telnyx_voice import build_telnyx_voice_router
 app.include_router(build_telnyx_voice_router())
 from telnyx_relay import build_telnyx_relay_router
 app.include_router(build_telnyx_relay_router())
+from telnyx_texml import build_telnyx_texml_router
+app.include_router(build_telnyx_texml_router())
 app.include_router(build_kb_router(get_current_user, record_audit))
 app.include_router(build_admin_router(get_current_user, require_owner, record_audit))
 app.include_router(build_rbac_router(get_current_user, user_can, user_has_cap, record_audit))

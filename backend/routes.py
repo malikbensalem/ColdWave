@@ -95,11 +95,11 @@ async def place_outbound_call(integ: dict, destination: str, say_text: str = Non
     if provider == "telnyx":
         if not integ.get("telnyx_enabled"):
             raise HTTPException(400, "Telnyx is selected but not enabled. Enable Telnyx in Settings → Integrations.")
-        if not (integ.get("telnyx_api_key") and integ.get("telnyx_connection_id") and integ.get("telnyx_phone_number")):
-            raise HTTPException(400, "Telnyx needs an API key, Connection ID and phone number in Settings → Integrations.")
-        from telnyx_voice import telnyx_make_call
+        if not (integ.get("telnyx_api_key") and integ.get("telnyx_texml_app_id") and integ.get("telnyx_phone_number")):
+            raise HTTPException(400, "Telnyx needs an API key, TeXML Application ID and phone number in Settings → Integrations.")
+        from telnyx_texml import telnyx_texml_make_call
         try:
-            result = await telnyx_make_call(integ, destination, call_id)
+            result = await telnyx_texml_make_call(integ, destination, call_id)
         except (ValueError, RuntimeError) as e:
             raise HTTPException(400, str(e))
         except Exception as e:
@@ -1004,7 +1004,7 @@ async def test_telnyx(body: dict = Body(default={}), user: dict = Depends(requir
     org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
     saved = (org or {}).get("integrations", {})
     integ = {"telnyx_api_key": body.get("telnyx_api_key") or saved.get("telnyx_api_key", ""),
-             "telnyx_connection_id": body.get("telnyx_connection_id") or saved.get("telnyx_connection_id", "")}
+             "telnyx_texml_app_id": body.get("telnyx_texml_app_id") or saved.get("telnyx_texml_app_id", "")}
     result = await telnyx_validate(integ)
     await audit(user["org_id"], user, "telnyx_key_test", detail=f"valid={result.get('valid')}", entity="integration")
     return result
