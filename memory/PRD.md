@@ -369,3 +369,11 @@ Audit verdict was FAIL (1 Critical, 2 High, 1 Medium). Fixes applied (nothing re
 - **Setup required by user (Telnyx portal)**: create a **TeXML Application**, assign the number to it, paste its **Application ID** in Settings; for ElevenLabs voice, store the ElevenLabs key as a Telnyx **Integration Secret**. Per-call Voice URL is set automatically at dial time.
 - **Tests**: NEW `tests/test_telnyx_texml.py` (6) + existing = **35 passing**. Testing agent iteration_20: **backend 100%, frontend 100%**, no product defects.
 - The old `telnyx_voice.py`/`telnyx_relay.py` modules remain mounted but are no longer used for outbound (Call Control path retired in favour of TeXML). ⚠️ Real audio still requires a live Telnyx call to confirm.
+
+## Iteration 37 (2026-08-29) — Fix: TeXML "application error" (webhook fetch) → inline TeXML
+- **Bug (Telnyx support diagnosis)**: live calls connected then played "an application error has occurred" ~1.3s after answer. Telnyx fetched the TeXML Application's configured **Voice URL (root `/`)** — returning HTML, not TeXML — instead of our per-call `Url`. The `POST /v2/texml/calls/{app_id}` endpoint ignored the per-call `Url` override and used the app's Voice URL.
+- **Fix** (`telnyx_texml.py` `telnyx_texml_make_call`): now sends the ConversationRelay markup **inline** via the documented `Texml` body field (built from `_relay_texml` at dial time), so Telnyx executes it directly and never fetches a webhook for voice instructions. Removed `Url`/`UrlMethod`; added `FallbackUrl` → new static `/api/telephony/telnyx/texml/fallback` (always-valid TeXML). Logs the dial HTTP status/response for diagnosis.
+- **answered_at** now stamped on the `answered` StatusCallback and on the relay `setup` frame (the instruction-fetch route no longer runs). Guarded to stamp once.
+- **New route** `/texml/fallback` (declared before `/texml/{call_id}` to avoid shadowing). Settings updated: set the TeXML app's Voice/Fallback URL to `/api/telephony/telnyx/texml/fallback` (safety net only — instructions are sent inline).
+- **Tests**: 35 passing; fallback + inline XML curl-verified. ⚠️ Awaiting user's live retry to confirm audio.
+

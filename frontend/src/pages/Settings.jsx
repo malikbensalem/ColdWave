@@ -320,12 +320,12 @@ function IntegrationsTab() {
         </div>
         {telnyxStatus && <p className={`text-xs ${telnyxStatus.valid ? "text-success" : "text-destructive"}`}>{telnyxStatus.valid ? `Telnyx API key valid ✓` : (telnyxStatus.error || "Invalid")}</p>}
         <div className="mt-2 pt-2 border-t border-border">
-          <p className="text-xs font-medium mb-1">TeXML Application — Voice webhook URL</p>
+          <p className="text-xs font-medium mb-1">TeXML Application — Voice &amp; Fallback URL</p>
           <div className="flex items-center gap-2">
-            <code data-testid="telnyx-webhook-url" className="flex-1 text-xs bg-secondary rounded-sm px-2 py-1.5 overflow-x-auto whitespace-nowrap">{webhookBase}/api/telephony/telnyx/texml/&#123;CallSid&#125;</code>
-            <button type="button" onClick={() => { navigator.clipboard?.writeText(`${webhookBase}/api/telephony/telnyx/texml/`); toast.success("Base URL copied"); }} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent shrink-0">Copy</button>
+            <code data-testid="telnyx-webhook-url" className="flex-1 text-xs bg-secondary rounded-sm px-2 py-1.5 overflow-x-auto whitespace-nowrap">{webhookBase}/api/telephony/telnyx/texml/fallback</code>
+            <button type="button" onClick={() => { navigator.clipboard?.writeText(`${webhookBase}/api/telephony/telnyx/texml/fallback`); toast.success("URL copied"); }} className="h-8 px-3 rounded-sm border border-border text-xs font-medium hover:bg-accent shrink-0">Copy</button>
           </div>
-          <p className="text-[11px] text-muted-foreground mt-1.5">Setup: in the Telnyx portal create a <b>TeXML Application</b>, assign your number to it, and paste its <b>Application ID</b> above. We set the per-call Voice URL automatically when dialing, so you don't need to hardcode it in the app. Then select <b>Telnyx</b> in “Telephony provider” above. Two-way conversation + answering-machine detection are built in.</p>
+          <p className="text-[11px] text-muted-foreground mt-1.5">Setup: in the Telnyx portal create a <b>TeXML Application</b>, assign your number to it, and paste its <b>Application ID</b> above. Set the app's <b>Voice URL</b> (and Fallback URL) to the link above — we send the AI call instructions <b>inline</b> at dial time, so this URL is only a safety net. Then select <b>Telnyx</b> in “Telephony provider” above. Two-way conversation + answering-machine detection are built in.</p>
         </div>
       </Section>
 

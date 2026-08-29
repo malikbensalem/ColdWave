@@ -108,16 +108,25 @@ def _relay_texml(call_id: str, opening: str, voice_id: str, org: dict) -> str:
 
 
 async def telnyx_texml_make_call(integ: dict, destination: str, call_id: str) -> dict:
-    """Place an outbound TeXML ConversationRelay call. Returns {callid, status}."""
+    """Place an outbound TeXML ConversationRelay call.
+
+    We pass the TeXML **inline** (`Texml` body field) instead of a fetch `Url`, so Telnyx
+    executes our ConversationRelay directly and never fetches the application's Voice URL
+    (that fetch was returning the app's root page -> 'application error'). Returns {callid, status}.
+    """
     key = integ.get("telnyx_api_key") or os.environ.get("TELNYX_API_KEY", "")
     app_id = integ.get("telnyx_texml_app_id", "")
     frm = integ.get("telnyx_phone_number", "")
     if not (key and app_id and frm):
         raise ValueError("Telnyx TeXML is not fully configured (need API key, TeXML Application ID and phone number).")
     base = public_base_url()
+    call = await db.calls.find_one({"id": call_id}, {"_id": 0})
+    org = await db.organizations.find_one({"id": call["org_id"]}, {"_id": 0}) if call else None
+    inline_texml = _relay_texml(call_id, (call or {}).get("opening"), (call or {}).get("voice_id"), org)
     payload = {
         "To": destination, "From": frm, "ApplicationSid": app_id,
-        "Url": f"{base}/api/telephony/telnyx/texml/{call_id}", "UrlMethod": "POST",
+        "Texml": inline_texml,
+        "FallbackUrl": f"{base}/api/telephony/telnyx/texml/fallback",
         "StatusCallback": f"{base}/api/telephony/telnyx/texml/status/{call_id}",
         "StatusCallbackMethod": "POST",
         "StatusCallbackEvent": "initiated ringing answered completed",
@@ -127,15 +136,27 @@ async def telnyx_texml_make_call(integ: dict, destination: str, call_id: str) ->
     }
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.post(f"{TELNYX}/texml/calls/{app_id}", headers=_headers(key), json=payload)
+    logger.info(f"telnyx texml dial {call_id} to={destination} -> HTTP {r.status_code}: {r.text[:200]}")
     if r.status_code >= 400:
         raise ValueError(f"Telnyx TeXML dial failed ({r.status_code}): {r.text[:200]}")
-    data = r.json().get("data", r.json())
+    try:
+        data = r.json().get("data", r.json())
+    except Exception:
+        data = {}
     sid = data.get("call_sid") or data.get("call_control_id") or data.get("sid")
     return {"callid": sid, "status": "Initiated"}
 
 
 def build_telnyx_texml_router() -> APIRouter:
     router = APIRouter(prefix="/api/telephony/telnyx", tags=["telnyx-texml"])
+
+    @router.api_route("/texml/fallback", methods=["GET", "POST"])
+    async def texml_fallback(request: Request):
+        # Static, always-valid TeXML — safe value for the TeXML Application's Voice/Fallback URL
+        # (we normally pass instructions inline, so this is only hit as a safety net).
+        return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response>'
+                        '<Say voice="Telnyx.Natural.abbie">Sorry, we could not connect your call right now. Goodbye.</Say>'
+                        '<Hangup/></Response>', media_type="application/xml")
 
     @router.api_route("/texml/{call_id}", methods=["GET", "POST"])
     async def texml_instructions(call_id: str, request: Request):
@@ -162,6 +183,9 @@ def build_telnyx_texml_router() -> APIRouter:
         form = await request.form()
         status = (form.get("CallStatus") or "").lower()
         logger.info(f"telnyx texml status {call_id}: {status}")
+        if status == "answered":
+            await db.calls.update_one({"id": call_id, "answered_at": {"$exists": False}},
+                                      {"$set": {"status": "in_progress", "answered_at": _now()}})
         if status in ("busy", "no-answer", "failed", "canceled"):
             cur = await db.calls.find_one({"id": call_id}, {"_id": 0, "status": 1, "analysis": 1})
             if cur and cur.get("status") not in ("completed", "no_answer") and not cur.get("analysis"):
@@ -290,6 +314,8 @@ def build_telnyx_texml_router() -> APIRouter:
                             "status": "in_progress",
                             "provider_call_sid": msg.get("callControlId") or msg.get("callSid"),
                             "relay_session": msg.get("sessionId"), "updated_at": _now()}})
+                        await db.calls.update_one({"id": call_id, "answered_at": {"$exists": False}},
+                                                  {"$set": {"answered_at": _now()}})
                 elif mtype == "prompt":
                     if state["task"] and not state["task"].done():
                         state["task"].cancel()
